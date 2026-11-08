@@ -12,7 +12,7 @@
 
 set -e
 HERE="${0:A:h}"
-VERSION=0.2.0
+VERSION=0.2.1
 case "$1" in
   -h|--help) sed -n '2,11s/^# \{0,1\}//p' "$0"; exit 0 ;;
   -v|--version) echo "tabsnap $VERSION"; exit 0 ;;
