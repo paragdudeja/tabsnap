@@ -1,0 +1,133 @@
+#!/bin/zsh
+# tabsnap-triage — use Claude to group, annotate and triage a tab snapshot.
+# Usage: tabsnap-triage [snapshot.md]   (default: latest snapshot in $TABSNAP_DIR)
+# Writes <snapshot>.triage.md next to the snapshot. Needs ANTHROPIC_API_KEY.
+
+set -e
+OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+MODEL="${TABSNAP_MODEL:-claude-opus-5-5}"
+
+if [[ -z "$ANTHROPIC_API_KEY" ]]; then
+  echo "ANTHROPIC_API_KEY is not set. Get a key at https://platform.claude.com and export it in ~/.zshrc." >&2
+  exit 1
+fi
+
+SNAP="$1"
+if [[ -z "$SNAP" ]]; then
+  SNAP=$(ls -t "$OUT_DIR"/tabs_*.md 2>/dev/null | grep -v '\.triage\.md$' | head -1)
+  [[ -z "$SNAP" ]] && { echo "No snapshots found in $OUT_DIR" >&2; exit 1; }
+fi
+[[ -f "$SNAP" ]] || { echo "Not found: $SNAP" >&2; exit 1; }
+OUT="${SNAP%.md}.triage.md"
+
+# Parse "- [ ] [title](url)" lines into [{id, title, url}]
+TABS=$(jq -Rn '
+  [inputs
+   | capture("^- \\[[ xX]\\] \\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)$")?
+   | .title |= gsub("\\\\(?<c>[\\[\\]])"; .c)]
+  | to_entries | map({id: (.key + 1), title: .value.title, url: .value.url})' < "$SNAP")
+COUNT=$(echo "$TABS" | jq length)
+(( COUNT > 0 )) || { echo "No tabs found in $SNAP" >&2; exit 1; }
+echo "Triaging $COUNT tabs from $(basename "$SNAP") with $MODEL…" >&2
+
+PROMPT="These are browser tabs someone had open and is about to close. They saved this list so they can come back to what matters.
+
+Group the tabs into a handful of themes (e.g. a topic they're studying, a work project, shopping). For each tab write a short note (under 15 words) on what it is and why it might have been open, and pick one action:
+- read_later: unfinished reading or a task they likely meant to get to
+- reference: docs or tools worth keeping a link to
+- done: looks finished or one-off (search results, a login page, an already-read article)
+- drop: low value, or a duplicate of another tab
+
+Also list ids of tabs that point to the same page. Start with a 2-3 sentence overview of what this person was working on.
+
+Tabs (id, title, url):
+$(echo "$TABS" | jq -r '.[] | "\(.id). \(.title) — \(.url)"')"
+
+SCHEMA='{
+  "type": "object", "additionalProperties": false,
+  "required": ["overview", "groups", "duplicates"],
+  "properties": {
+    "overview": {"type": "string"},
+    "groups": {"type": "array", "items": {
+      "type": "object", "additionalProperties": false,
+      "required": ["theme", "summary", "tabs"],
+      "properties": {
+        "theme": {"type": "string"},
+        "summary": {"type": "string"},
+        "tabs": {"type": "array", "items": {
+          "type": "object", "additionalProperties": false,
+          "required": ["id", "note", "action"],
+          "properties": {
+            "id": {"type": "integer"},
+            "note": {"type": "string"},
+            "action": {"type": "string", "enum": ["read_later", "reference", "done", "drop"]}
+          }}}
+      }}},
+    "duplicates": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}
+  }}'
+
+BODY=$(jq -n --arg model "$MODEL" --arg prompt "$PROMPT" --argjson schema "$SCHEMA" '{
+  model: $model,
+  max_tokens: 16000,
+  fallbacks: "default",
+  output_config: {effort: "medium", format: {type: "json_schema", schema: $schema}},
+  messages: [{role: "user", content: $prompt}]
+}')
+
+RESP_FILE=$(mktemp)
+trap 'rm -f "$RESP_FILE"' EXIT
+HTTP=$(curl -sS -o "$RESP_FILE" -w '%{http_code}' https://api.anthropic.com/v1/messages \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $ANTHROPIC_API_KEY" \
+  -H "anthropic-version: 2026-10-21" \
+  -H "anthropic-beta: server-side-fallback-2026-07-01" \
+  -d "$BODY")
+
+if [[ "$HTTP" != 200 ]]; then
+  echo "API error ($HTTP): $(jq -r '.error.message // .' "$RESP_FILE")" >&2
+  exit 1
+fi
+STOP=$(jq -r '.stop_reason' "$RESP_FILE")
+case "$STOP" in
+  end_turn) ;;
+  refusal) echo "Claude declined to triage this snapshot ($(jq -r '.stop_details.category // "no category"' "$RESP_FILE"))." >&2; exit 1 ;;
+  max_tokens) echo "Response was cut off (max_tokens). Try a smaller snapshot." >&2; exit 1 ;;
+  *) echo "Unexpected stop_reason: $STOP" >&2; exit 1 ;;
+esac
+
+RESULT=$(jq -r '[.content[] | select(.type == "text") | .text] | join("")' "$RESP_FILE")
+
+jq -rn --argjson r "$RESULT" --argjson tabs "$TABS" \
+   --arg snap "$(basename "$SNAP")" --arg model "$(jq -r .model "$RESP_FILE")" '
+  def badge: {read_later: "📖 read later", reference: "📌 reference", done: "✅ done", drop: "🗑 drop"}[.];
+  ($tabs | map({(.id | tostring): .}) | add) as $byid
+  | ([$r.groups[].tabs[].id] | unique) as $seen
+  | [$r.groups[].tabs[]] as $all
+  | "# Tab triage — \($snap)",
+    "",
+    "_Triaged by \($model). \($tabs | length) tabs._",
+    "",
+    "> \($r.overview)",
+    "",
+    ( ["read_later", "reference", "done", "drop"]
+      | map(. as $a | "\($a | badge): \([$all[] | select(.action == $a)] | length)")
+      | join(" · ") ),
+    "",
+    ( $r.groups[]
+      | "## \(.theme) (\(.tabs | length))", "", "_\(.summary)_", "",
+        ( .tabs[] | . as $t | $byid[$t.id | tostring] | select(.)
+          | "- [ ] [\(.title | gsub("(?<c>[\\[\\]])"; "\\\(.c)"))](\(.url)) — \($t.note) `\($t.action | badge)`" ),
+        "" ),
+    ( [$tabs[] | select(.id as $i | $seen | index($i) | not)] as $missed
+      | if ($missed | length) > 0 then
+          "## Unsorted (\($missed | length))", "",
+          ($missed[] | "- [ ] [\(.title)](\(.url))"), ""
+        else empty end ),
+    ( [$r.duplicates[] | select(length > 1)] as $d
+      | if ($d | length) > 0 then
+          "## Duplicates", "",
+          ($d[] | "- " + (map($byid[tostring].title // "tab \(.)") | join(" = "))), ""
+        else empty end )
+' > "$OUT"
+
+echo "Saved triage → $OUT"
