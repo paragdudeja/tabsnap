@@ -1,0 +1,53 @@
+name: Bug report
+description: Something broke or did the wrong thing
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for trying tabsnap! A few details help a lot.
+  - type: textarea
+    id: tried
+    attributes:
+      label: What did you run or click?
+      placeholder: e.g. `tabsnap --close --window front`, or "Snapshot + Close" in the menu bar
+    validations:
+      required: true
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened?
+      description: Paste any output or error message.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect instead?
+    validations:
+      required: true
+  - type: dropdown
+    id: browsers
+    attributes:
+      label: Browser(s)
+      multiple: true
+      options: [Brave, Chrome, Arc, Edge, Safari, Other]
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: tabsnap version
+      description: Output of `tabsnap --version`
+      placeholder: tabsnap 0.2.4
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: e.g. 26.1
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: If a browser crashed, attach its report from ~/Library/Logs/DiagnosticReports/. Please remove any private URLs from pasted snapshots.

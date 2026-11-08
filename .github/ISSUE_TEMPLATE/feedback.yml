@@ -1,0 +1,35 @@
+name: Feedback or idea
+description: What worked, what didn't, what's missing
+labels: [feedback]
+body:
+  - type: markdown
+    attributes:
+      value: Honest is more useful than polite, "meh, wouldn't use it" included.
+  - type: textarea
+    id: used
+    attributes:
+      label: How did you use it?
+      placeholder: e.g. snapshot + close at the end of the day, menu bar counter, triage…
+    validations:
+      required: true
+  - type: textarea
+    id: missing
+    attributes:
+      label: What did you expect it to do that it didn't?
+    validations:
+      required: true
+  - type: textarea
+    id: confusing
+    attributes:
+      label: Anything confusing or annoying?
+  - type: dropdown
+    id: again
+    attributes:
+      label: Did you use it again after the first try?
+      options: ["Yes, regularly", "Once or twice more", "No"]
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why (or why not)?
