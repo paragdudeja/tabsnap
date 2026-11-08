@@ -1,19 +1,23 @@
 #!/bin/zsh
 # tabsnap-restore — reopen the unticked tabs from a snapshot or triage file.
-# Usage: tabsnap-restore [--all] [--dry-run] [file.md]   (default: latest snapshot)
-#   --all      also reopen tabs you've ticked off (- [x])
-#   --dry-run  list what would open without opening anything
+# Usage: tabsnap-restore [--all] [--all-copies] [--dry-run] [file.md]   (default: latest snapshot)
+#   --all         also reopen tabs you've ticked off (- [x])
+#   --all-copies  reopen every copy of a URL that was open more than once
+#   --dry-run     list what would open without opening anything
 # Tabs reopen in the browser they were saved from when it's installed, else the default browser.
 
 set -e
 OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
 ALL=0
 DRY=0
+COPIES=0
 SNAP=""
 for arg in "$@"; do
   case "$arg" in
     --all) ALL=1 ;;
     --dry-run) DRY=1 ;;
+    --all-copies) COPIES=1 ;;
+    -*) echo "tabsnap restore: unknown option $arg" >&2; exit 2 ;;
     *) SNAP="$arg" ;;
   esac
 done
@@ -35,10 +39,23 @@ TABS=$(jq -Rn --argjson all "$ALL" '
         ($line | capture("^## (?<b>.+) — [0-9]+ tabs$")?.b // "") as $b
         | .browser = (if ($known | index($b)) then $b else "" end)
       else
-        ([$line | capture("^- \\[(?<chk>[ xX])\\] \\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)( — .*)?$")?] | first) as $m
+        ([$line | capture("^\\s*[-*+]\\s+\\[(?<chk>[ xX])\\]\\s+\\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)( — .*)?\\s*$")?] | first) as $m
         | if $m and ($all == 1 or $m.chk == " ") then .tabs += [{browser: .browser, url: $m.url}] else . end
       end)
   | .tabs' < "$SNAP")
+
+# Open each URL once unless asked otherwise (first occurrence wins, so its browser is kept)
+DUPES=0
+if (( ! COPIES )); then
+  UNIQUE=$(print -r -- "$TABS" | jq -c 'reduce .[] as $t ({seen: {}, out: []};
+    if .seen[$t.url] then . else .seen[$t.url] = true | .out += [$t] end) | .out')
+  DUPES=$(( $(print -r -- "$TABS" | jq length) - $(print -r -- "$UNIQUE" | jq length) ))
+  TABS="$UNIQUE"
+fi
+SKIPPED_NOTE=""
+if (( DUPES > 0 )); then
+  SKIPPED_NOTE=" (skipped $DUPES duplicate$( (( DUPES == 1 )) || echo s); --all-copies to include)"
+fi
 
 COUNT=$(print -r -- "$TABS" | jq length)
 if (( COUNT == 0 )); then
@@ -47,7 +64,7 @@ if (( COUNT == 0 )); then
 fi
 
 if (( DRY )); then
-  echo "Would reopen $COUNT tabs from $(basename "$SNAP"):"
+  echo "Would reopen $COUNT tabs from $(basename "$SNAP")$SKIPPED_NOTE:"
   print -r -- "$TABS" | jq -r '.[] | "  [\(if .browser == "" then "default" else .browser end)] \(.url)"'
   exit 0
 fi
@@ -62,4 +79,4 @@ print -r -- "$TABS" | jq -r 'group_by(.browser)[] | [.[0].browser] + map(.url) |
     open "${urls[@]}"
   fi
 done
-echo "Reopened $COUNT tabs from $(basename "$SNAP")"
+echo "Reopened $COUNT tabs from $(basename "$SNAP")$SKIPPED_NOTE"

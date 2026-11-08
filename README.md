@@ -58,9 +58,12 @@ tabsnap --close --window "Interview prep"   # a window you named
 
 `tabsnap restore` reopens every unticked (`- [ ]`) tab from the latest snapshot, in the browser it was saved from. Tick off tabs as you deal with them and restore brings back only what's left. It also works on a triage file.
 
+Snapshots keep every tab, duplicates included, so they mirror your windows exactly; restore opens each URL once unless you pass `--all-copies`.
+
 ```sh
 tabsnap restore --dry-run                 # list what would open
 tabsnap restore --all                     # include ticked tabs too
+tabsnap restore --all-copies              # reopen duplicate tabs too
 tabsnap restore ~/tab-snapshots/tabs_2026-11-08_12-15-26.triage.md
 ```
 

@@ -8,7 +8,7 @@
 #   e.g. tabsnap --close --window front "done with this research"
 #        tabsnap setup   grant browser access, write a config file, link the menu bar plugin
 #        tabsnap triage [snapshot.md]   triage an existing snapshot (default: latest)
-#        tabsnap restore [--all] [--dry-run] [file.md]   reopen unticked tabs (default: latest)
+#        tabsnap restore [--all] [--all-copies] [--dry-run] [file.md]   reopen unticked tabs, once per URL
 #        tabsnap count   print how many tabs are open (never launches a browser)
 #        tabsnap config  show the config file path and current settings
 # Incognito windows are never saved, counted or closed.
@@ -215,7 +215,7 @@ SCOPE="${BROWSER_ARG}${BROWSER_ARG:+${WINDOW_ARG:+ · }}${WINDOW_ARG:+$([[ "$WIN
 {
   echo "# Tab snapshot — $HUMAN"
   echo
-  [[ -n "$NOTE" ]] && echo "> $NOTE" && echo
+  [[ -n "$NOTE" ]] && print -r -- "> $NOTE" && echo
   echo "**Total tabs:** $TOTAL${SCOPE:+ · **Scope:** $SCOPE}"
   echo
   print -r -- "$RAW" | jq -r .body
@@ -247,10 +247,16 @@ function run(argv) {
       try { w = app.windows.byId(Number(id)); w.id(); } catch (e) { continue; }  // window gone
       if (isIncognito(w)) continue;
       const tabs = w.tabs();
+      const doomed = tabs.map(t => { try { return want.has(t.url()); } catch (e) { return false; } });
+      if (doomed.every(Boolean)) {
+        // Emptying the window: closing its last tab by script crashed Brave once, so
+        // close all but one tab, then close the window itself.
+        for (let i = tabs.length - 1; i >= 1; i--) { try { tabs[i].close(); closed++; } catch (e) {} }
+        try { w.close(); closed++; } catch (e) {}
+        continue;
+      }
       for (let i = tabs.length - 1; i >= 0; i--) {
-        try {
-          if (want.has(tabs[i].url())) { tabs[i].close(); closed++; }
-        } catch (e) {}
+        if (doomed[i]) { try { tabs[i].close(); closed++; } catch (e) {} }
       }
     }
   }

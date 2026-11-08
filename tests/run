@@ -70,6 +70,17 @@ expect "unknown header → default browser" "$out" "[default] https://example.co
 expect_not "skips ticked tabs" "$out" "example.com/b"
 expect "--all includes ticked" "$("$REPO/tabsnap" restore --all --dry-run "$SNAP")" "Would reopen 6 tabs"
 
+printf -- '-  [ ] [two spaces](https://e.com/1)\n- [ ]  [gap](https://e.com/2)\n  - [ ] [nested](https://e.com/3)\n* [ ] [star](https://e.com/4)\n+ [x] [plus ticked](https://e.com/5)\n- [] [no box space](https://e.com/6)\n' > "$WORK/hand-edited.md"
+out=$("$REPO/tabsnap" restore --dry-run "$WORK/hand-edited.md")
+expect "accepts hand-edited checkbox spacing" "$out" "Would reopen 4 tabs"
+expect_not "still skips malformed boxes" "$out" "e.com/6"
+
+printf -- '## Safari — 4 tabs\n\n- [ ] [a](https://e.com/a)\n- [ ] [a again](https://e.com/a)\n- [ ] [b](https://e.com/b)\n- [ ] [a 3rd](https://e.com/a)\n' > "$WORK/dupes.md"
+out=$("$REPO/tabsnap" restore --dry-run "$WORK/dupes.md")
+expect "restore opens each url once" "$out" "Would reopen 2 tabs from dupes.md (skipped 2 duplicates; --all-copies to include)"
+expect "--all-copies keeps duplicates" "$("$REPO/tabsnap" restore --dry-run --all-copies "$WORK/dupes.md")" "Would reopen 4 tabs from dupes.md:"
+expect "restore rejects unknown options" "$("$REPO/tabsnap" restore --bogus 2>&1)" "unknown option --bogus"
+
 TRIAGE="$WORK/snaps/tabs_2026-01-01_00-00-00.triage.md"
 cat > "$TRIAGE" <<'EOF'
 ## Reading (2)
@@ -125,6 +136,11 @@ out=$(TABSNAP_DIR="$WORK/capture" "$REPO/tabsnap" "ci note" 2>&1)
 expect "snapshot saves file" "$out" "Saved "
 file=("$WORK"/capture/tabs_*.md(N))
 [[ -n "$file" ]] && expect "snapshot has note" "$(cat "$file[1]")" "> ci note" || fail "snapshot file exists"
+out=$(TABSNAP_DIR="$WORK/capture2" "$REPO/tabsnap" 'keeps \n and $HOME literally' 2>&1)
+file=("$WORK"/capture2/tabs_*.md(N))
+[[ -n "$file" ]] && expect "note keeps backslashes" "$(cat "$file[1]")" '> keeps \n and $HOME literally' || fail "second snapshot file exists"
+TABSNAP_DIR="$WORK/same" "$REPO/tabsnap" a >/dev/null 2>&1; TABSNAP_DIR="$WORK/same" "$REPO/tabsnap" b >/dev/null 2>&1
+same=("$WORK"/same/tabs_*.md(N)); [[ ${#same} == 2 ]] && ok "same-second snapshots don't overwrite" || fail "same-second snapshots don't overwrite" "${#same} files"
 
 echo
 echo "$PASS passed, $FAIL failed"
