@@ -13,7 +13,7 @@ All notable changes to tabsnap. New work goes under **Unreleased**; `./release` 
 
 ### Changed
 - `tabsnap restore` opens each URL once. Pass `--all-copies` to reopen duplicate tabs too. Snapshots still record every tab.
-- When `--close` empties a window, tabsnap now closes the window itself instead of closing its last tab by script. Brave crashed once on the old path during testing.
+- When `--close` empties a window, tabsnap now closes the window itself instead of closing its last tab by script. **⚠️ Reverted in 0.2.4: this could crash Brave. Upgrade if you're on 0.2.3.**
 
 ### Fixed
 - `restore` accepts hand-edited checkbox lines (extra spaces, nested items, `*` and `+` bullets).
