@@ -4,6 +4,8 @@ All notable changes to tabsnap. New work goes under **Unreleased**; `./release` 
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-08
+
 ### Added
 - **AI agents:** a tabsnap skill teaches Claude Code (and other agents that read skills) to list, save, search, close and restore your tabs on request, with safety rules built in. Install it from `tabsnap setup` or with `/plugin install tabsnap --marketplace paragdudeja/tabsnap`.
 - `tabsnap search WORDS…` finds tabs across all your snapshots and triage notes, newest first, one result per page. `--restore` reopens the matches in the browser each was saved from (`--dry-run` to preview; asks before opening more than 5).
