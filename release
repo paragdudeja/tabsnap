@@ -72,10 +72,12 @@ section Unreleased | sed 's/^/    /'
 
 echo "→ Bump version and date the changelog"
 run sed -i '' "s/^VERSION=.*/VERSION=$VERSION/" tabsnap
+# Keep the Claude Code plugin's version in step with the CLI
+run sed -i '' "s/\"version\": \"[^\"]*\"/\"version\": \"$VERSION\"/" .claude-plugin/plugin.json
 run sed -i '' "s/^## \[Unreleased\]\$/## [Unreleased]\\
 \\
 ## [$VERSION] - $(date +%Y-%m-%d)/" "$CHANGELOG"
-run git add tabsnap CHANGELOG.md
+run git add tabsnap CHANGELOG.md .claude-plugin/plugin.json
 run git commit -q -m "Release $TAG" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 run git tag "$TAG"
 run git push -q origin main "$TAG"

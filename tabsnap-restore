@@ -1,6 +1,8 @@
 #!/bin/zsh
-# tabsnap-restore — reopen the unticked tabs from a snapshot or triage file.
+# tabsnap-restore — reopen the unticked tabs from a snapshot or triage file, or specific pages.
 # Usage: tabsnap-restore [--all] [--all-copies] [--dry-run] [file.md]   (default: latest snapshot)
+#        tabsnap-restore --url URL [--url URL…] [--browser NAME] [--dry-run]
+#        tabsnap-restore --from-json FILE|-    JSON list of {url, browser?}, e.g. from tabsnap search --json
 #   --all         also reopen tabs you've ticked off (- [x])
 #   --all-copies  reopen every copy of a URL that was open more than once
 #   --dry-run     list what would open without opening anything
@@ -12,26 +14,65 @@ ALL=0
 DRY=0
 COPIES=0
 SNAP=""
-for arg in "$@"; do
-  case "$arg" in
+URLS=()
+BROWSER=""
+FROM_JSON=""
+while (( $# )); do
+  case "$1" in
     --all) ALL=1 ;;
     --dry-run) DRY=1 ;;
     --all-copies) COPIES=1 ;;
-    -*) echo "tabsnap restore: unknown option $arg" >&2; exit 2 ;;
-    *) SNAP="$arg" ;;
+    --url|--browser|--from-json)
+      [[ -n "$2" ]] || { echo "tabsnap restore: $1 needs a value" >&2; exit 2; }
+      case "$1" in --url) URLS+=("$2") ;; --browser) BROWSER="$2" ;; --from-json) FROM_JSON="$2" ;; esac
+      shift ;;
+    --url=*) URLS+=("${1#*=}") ;;
+    --browser=*) BROWSER="${1#*=}" ;;
+    --from-json=*) FROM_JSON="${1#*=}" ;;
+    -*) echo "tabsnap restore: unknown option $1" >&2; exit 2 ;;
+    *) SNAP="$1" ;;
   esac
+  shift
 done
 
-if [[ -z "$SNAP" ]]; then
+if [[ -n "$BROWSER" ]]; then
+  matches=()
+  for b in "Brave Browser" "Google Chrome" "Arc" "Microsoft Edge" "Safari"; do
+    [[ "${(L)b}" == *"${(L)BROWSER}"* ]] && matches+=("$b")
+  done
+  (( ${#matches} == 1 )) || { echo "tabsnap restore: --browser '$BROWSER' should be one of: brave, chrome, arc, edge, safari" >&2; exit 2; }
+  BROWSER="$matches[1]"
+fi
+
+if (( ${#URLS} )) || [[ -n "$FROM_JSON" ]]; then
+  # Specific pages: from --url, or a JSON list such as tabsnap search --json output
+  [[ -z "$SNAP" ]] || { echo "tabsnap restore: give a snapshot file or --url/--from-json, not both" >&2; exit 2; }
+  if [[ -n "$FROM_JSON" ]]; then
+    input=$([[ "$FROM_JSON" == - ]] && cat || cat -- "$FROM_JSON")
+    TABS=$(print -r -- "$input" | jq -c --arg b "$BROWSER" '
+      if type == "array" then . else error("expected a JSON list") end
+      | map(select(type == "object" and (.url | type) == "string")
+            | {url, browser: (if $b != "" then $b else (.browser // "") end)})' 2>/dev/null) \
+      || { echo "tabsnap restore: --from-json needs a JSON list of {\"url\": …} objects" >&2; exit 2; }
+  else
+    TABS=$(jq -cn --arg b "$BROWSER" '$ARGS.positional | map({url: ., browser: $b})' --args "${URLS[@]}")
+  fi
+  n=$(print -r -- "$TABS" | jq length)
+  SOURCE="$n requested page$( (( n == 1 )) || echo s)"
+fi
+
+if [[ -z "$TABS" ]] && [[ -z "$SNAP" ]]; then
   snaps=("$OUT_DIR"/tabs_*.md(N.om))   # newest first; (N) = no error when empty
   snaps=(${snaps:#*.triage.md})
   SNAP="$snaps[1]"
   [[ -z "$SNAP" ]] && { echo "No snapshots found in $OUT_DIR" >&2; exit 1; }
 fi
-[[ -f "$SNAP" ]] || { echo "Not found: $SNAP" >&2; exit 1; }
+[[ -n "$TABS" || -f "$SNAP" ]] || { echo "Not found: $SNAP" >&2; exit 1; }
 
 # Snapshot "## <Browser> — N tabs" headers set the browser for the tabs below them;
 # triage files have theme headers instead, so those tabs get the default browser.
+if [[ -z "$TABS" ]]; then
+SOURCE="$(basename "$SNAP")"
 TABS=$(jq -Rn --argjson all "$ALL" '
   ["Brave Browser", "Google Chrome", "Arc", "Microsoft Edge", "Safari"] as $known
   | reduce inputs as $line ({browser: "", tabs: []};
@@ -43,6 +84,7 @@ TABS=$(jq -Rn --argjson all "$ALL" '
         | if $m and ($all == 1 or $m.chk == " ") then .tabs += [{browser: .browser, url: $m.url}] else . end
       end)
   | .tabs' < "$SNAP")
+fi
 
 # Open each URL once unless asked otherwise (first occurrence wins, so its browser is kept)
 DUPES=0
@@ -59,12 +101,12 @@ fi
 
 COUNT=$(print -r -- "$TABS" | jq length)
 if (( COUNT == 0 )); then
-  echo "Nothing to restore from $(basename "$SNAP")."
+  echo "Nothing to restore from $SOURCE."
   exit 0
 fi
 
 if (( DRY )); then
-  echo "Would reopen $COUNT tabs from $(basename "$SNAP")$SKIPPED_NOTE:"
+  echo "Would reopen $COUNT tabs from $SOURCE$SKIPPED_NOTE:"
   print -r -- "$TABS" | jq -r '.[] | "  [\(if .browser == "" then "default" else .browser end)] \(.url)"'
   exit 0
 fi
@@ -79,4 +121,4 @@ print -r -- "$TABS" | jq -r 'group_by(.browser)[] | [.[0].browser] + map(.url) |
     open "${urls[@]}"
   fi
 done
-echo "Reopened $COUNT tabs from $(basename "$SNAP")$SKIPPED_NOTE"
+echo "Reopened $COUNT tabs from $SOURCE$SKIPPED_NOTE"

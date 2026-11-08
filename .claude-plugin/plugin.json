@@ -1,0 +1,13 @@
+{
+  "name": "tabsnap",
+  "version": "0.2.5",
+  "description": "Let your agent see, save, search, close and reopen your browser tabs through the tabsnap CLI (macOS).",
+  "author": {
+    "name": "Parag Dudeja",
+    "url": "https://github.com/paragdudeja"
+  },
+  "homepage": "https://github.com/paragdudeja/tabsnap",
+  "repository": "https://github.com/paragdudeja/tabsnap",
+  "license": "MIT",
+  "keywords": ["tabs", "browser", "macos", "productivity", "skill"]
+}

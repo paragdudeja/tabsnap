@@ -4,6 +4,17 @@ All notable changes to tabsnap. New work goes under **Unreleased**; `./release` 
 
 ## [Unreleased]
 
+### Added
+- **AI agents:** a tabsnap skill teaches Claude Code (and other agents that read skills) to list, save, search, close and restore your tabs on request, with safety rules built in. Install it from `tabsnap setup` or with `/plugin install tabsnap --marketplace paragdudeja/tabsnap`.
+- `tabsnap search WORDS…` finds tabs across all your snapshots and triage notes, newest first, one result per page. `--restore` reopens the matches in the browser each was saved from (`--dry-run` to preview; asks before opening more than 5).
+- `tabsnap restore --url URL…` reopens specific pages, and `--from-json -` takes a list such as `tabsnap search --json` output.
+- `tabsnap list` shows open tabs without saving anything.
+- `--json` output for snapshots, `list`, `search` and `config`.
+
+### Changed
+- `tabsnap setup` does the whole install: it can install SwiftBar and add the menu bar counter for you (no more picking a plugin folder), and install the Claude Code skill. `--yes`, `--no-menu-bar` and `--no-skill` control it; run without a terminal, it only describes optional steps.
+- Homebrew now reminds you to run `tabsnap setup` after installing.
+
 ## [0.2.4] - 2026-11-08
 
 ### Fixed

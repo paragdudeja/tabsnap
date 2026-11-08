@@ -1,13 +1,44 @@
 #!/bin/zsh
-# tabsnap-setup — first-run setup: browser access, config file, menu bar plugin, triage check.
-# Usage: tabsnap setup    (safe to re-run; it never overwrites your config)
+# tabsnap-setup — first-run setup: browser access, config file, menu bar counter,
+# Claude Code skill, triage check. Safe to re-run; it never overwrites your config.
+# Usage: tabsnap setup [--yes] [--no-menu-bar] [--no-skill]
+#   --yes          accept every optional step without asking
+#   --no-menu-bar  skip the SwiftBar menu bar counter
+#   --no-skill     skip installing the Claude Code skill
+# Without a terminal to answer questions (e.g. run by an agent), optional steps are
+# only described, never installed, unless --yes is given.
 
 HERE="${0:A:h}"
 CONFIG="${TABSNAP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/tabsnap/config}"
 OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+YES=0
+MENU=1
+SKILL=1
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) YES=1 ;;
+    --no-menu-bar) MENU=0 ;;
+    --no-skill) SKILL=0 ;;
+    *) echo "tabsnap setup: unknown option $arg" >&2; exit 2 ;;
+  esac
+done
 ok()   { echo "  ✓ $1"; }
 warn() { echo "  ! $1"; }
 todo() { echo "  → $1"; }
+ask() {  # yes/no question, default yes; never blocks without a terminal
+  (( YES )) && return 0
+  [[ -t 0 && -t 1 ]] || return 1
+  local reply
+  read -r "reply?  ? $1 [Y/n] "
+  [[ -z "$reply" || "$reply" == [Yy]* ]]
+}
+# Files that ship next to this script: the repo checkout, or Homebrew's share/tabsnap
+shared() {
+  local c
+  for c in "$HERE/$1" "$(brew --prefix 2>/dev/null)/share/tabsnap/$1"; do
+    [[ -e "$c" ]] && { print -r -- "$c"; return; }
+  done
+}
 
 echo "Browser access"
 # Asking a running browser for its windows makes macOS show the permission prompt once.
@@ -58,26 +89,56 @@ EOF
 fi
 mkdir -p "$OUT_DIR" && ok "snapshots go to $OUT_DIR"
 
-echo "Menu bar (optional)"
-plugin=""
-for candidate in "$HERE/swiftbar/tabsnap.1m.sh" "$(brew --prefix 2>/dev/null)/share/tabsnap/swiftbar/tabsnap.1m.sh"; do
-  [[ -f "$candidate" ]] && { plugin="$candidate"; break; }
-done
+echo "Menu bar counter (optional)"
+plugin=$(shared swiftbar/tabsnap.1m.sh)
+default_dir="$HOME/Library/Application Support/SwiftBar/Plugins"
 plugin_dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)
 plugin_dir="${plugin_dir/#\~/$HOME}"
-installed=("$plugin_dir"/tabsnap.*.sh(N))
-if ! open -Ra SwiftBar 2>/dev/null; then
-  todo "for a live tab count in the menu bar: brew install --cask swiftbar, open it once, then re-run tabsnap setup"
-elif [[ -z "$plugin_dir" ]]; then
-  todo "open SwiftBar once and choose a plugin folder, then re-run tabsnap setup"
+installed=()
+[[ -n "$plugin_dir" ]] && installed=("$plugin_dir"/tabsnap.*.sh(N))
+if (( ! MENU )); then
+  todo "skipped (--no-menu-bar)"
 elif [[ -n "$installed" ]] && grep -q '<xbar.title>tabsnap</xbar.title>' "$installed[1]" 2>/dev/null; then
-  ok "SwiftBar plugin already installed ($installed[1])"
+  ok "already in your menu bar (SwiftBar)"
 elif [[ -n "$installed" ]]; then
   warn "$installed[1] exists and isn't the tabsnap plugin; leaving it alone"
 elif [[ -z "$plugin" ]]; then
-  warn "couldn't find the tabsnap plugin file next to this install"
+  warn "couldn't find the tabsnap menu bar plugin next to this install"
+elif ask "Show your open-tab count in the menu bar? (uses the free SwiftBar app)"; then
+  if ! open -Ra SwiftBar 2>/dev/null; then
+    echo "    installing SwiftBar with Homebrew…"
+    # Pre-set the plugin folder so SwiftBar's first launch doesn't ask for one
+    [[ -n "$plugin_dir" ]] || defaults write com.ameba.SwiftBar PluginDirectory -string "$default_dir"
+    brew install --cask swiftbar >/dev/null 2>&1 || { warn "couldn't install SwiftBar; try: brew install --cask swiftbar"; plugin=""; }
+  fi
+  if [[ -n "$plugin" ]]; then
+    [[ -n "$plugin_dir" ]] || { plugin_dir="$default_dir"; defaults write com.ameba.SwiftBar PluginDirectory -string "$plugin_dir"; }
+    mkdir -p "$plugin_dir"
+    ln -s "$plugin" "$plugin_dir/" \
+      && { pgrep -xq SwiftBar && open -g "swiftbar://refreshallplugins" || open -g -a SwiftBar; } \
+      && ok "added to your menu bar; click it for snapshot, close, triage and restore"
+  fi
 else
-  ln -s "$plugin" "$plugin_dir/" && open -g "swiftbar://refreshallplugins" && ok "linked SwiftBar plugin"
+  todo "later: tabsnap setup (or brew install --cask swiftbar, then tabsnap setup)"
+fi
+
+echo "AI agents (optional)"
+skill=$(shared skills/tabsnap)
+skill_dir="$HOME/.claude/skills/tabsnap"
+if (( ! SKILL )); then
+  todo "skipped (--no-skill)"
+elif [[ -z "$skill" ]]; then
+  warn "couldn't find the tabsnap skill next to this install"
+elif ! command -v claude >/dev/null && [[ ! -d "$HOME/.claude" ]]; then
+  todo "using another agent? point it at $skill/SKILL.md"
+elif [[ -e "$skill_dir" ]]; then
+  if grep -q '^name: tabsnap$' "$skill_dir/SKILL.md" 2>/dev/null; then ok "Claude Code skill installed: ask Claude \"what tabs do I have open?\""
+  else warn "$skill_dir exists and isn't the tabsnap skill; leaving it alone"; fi
+elif ask "Let Claude Code use tabsnap? (installs the tabsnap skill)"; then
+  mkdir -p "${skill_dir:h}" && ln -s "$skill" "$skill_dir" \
+    && ok "Claude Code skill installed: in a new session, ask \"what tabs do I have open?\""
+else
+  todo "later: tabsnap setup, or in Claude Code: /plugin install tabsnap --marketplace paragdudeja/tabsnap"
 fi
 
 echo "AI triage (optional)"

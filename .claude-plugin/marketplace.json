@@ -1,0 +1,15 @@
+{
+  "name": "tabsnap",
+  "description": "tabsnap: snapshot, search and restore your browser tabs.",
+  "owner": {
+    "name": "Parag Dudeja",
+    "url": "https://github.com/paragdudeja"
+  },
+  "plugins": [
+    {
+      "name": "tabsnap",
+      "source": "./",
+      "description": "Let your agent see, save, search, close and reopen your browser tabs through the tabsnap CLI (macOS)."
+    }
+  ]
+}

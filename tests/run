@@ -42,6 +42,27 @@ out=$("$REPO/tabsnap" --window 2>&1); expect "--window needs a value" "$out" "--
 out=$("$REPO/tabsnap" --clsoe 2>&1); expect "rejects typo'd flags" "$out" "unknown option --clsoe"
 expect "--help documents --window" "$("$REPO/tabsnap" --help)" "--window   only the front window"
 
+echo "json + agents"
+out=$("$REPO/tabsnap" config --json)
+print -r -- "$out" | jq -e '.dir and (.keep | type == "array")' >/dev/null && ok "config --json is structured" || fail "config --json is structured" "$out"
+out=$(TABSNAP_KEEP=" a.com , b.com" "$REPO/tabsnap" config --json | jq -c .keep)
+expect "config --json splits keep list" "$out" '["a.com","b.com"]'
+out=$("$REPO/tabsnap" list --json 2>&1)
+print -r -- "$out" | jq -e '(.tabs | type == "array") and (.total | type == "number")' >/dev/null && ok "list --json is valid" || fail "list --json is valid" "$out"
+expect "list refuses --close" "$("$REPO/tabsnap" list --close 2>&1)" "only shows tabs"
+[[ "$(grep -c '^name: tabsnap$' "$REPO/skills/tabsnap/SKILL.md")" == 1 ]] && ok "skill has frontmatter" || fail "skill has frontmatter"
+jq -e '.name == "tabsnap"' "$REPO/.claude-plugin/plugin.json" >/dev/null && ok "plugin manifest" || fail "plugin manifest"
+
+echo "setup"
+FH="$WORK/home"; mkdir -p "$FH"
+out=$(HOME="$FH" TABSNAP_CONFIG="$WORK/setup-cfg" TABSNAP_DIR="$WORK/setup-snaps" "$REPO/tabsnap" setup --no-menu-bar </dev/null 2>&1)
+expect "setup writes config" "$(cat "$WORK/setup-cfg" 2>/dev/null)" "keep = mail.google.com"
+[[ ! -e "$FH/.claude/skills/tabsnap" ]] && ok "no terminal: setup installs nothing optional" || fail "no terminal: setup installs nothing optional"
+mkdir -p "$FH/.claude"
+out=$(HOME="$FH" TABSNAP_CONFIG="$WORK/setup-cfg" "$REPO/tabsnap" setup --yes --no-menu-bar </dev/null 2>&1)
+[[ -f "$FH/.claude/skills/tabsnap/SKILL.md" ]] && ok "--yes links the Claude Code skill" || fail "--yes links the Claude Code skill" "$out"
+expect "setup rejects unknown flags" "$("$REPO/tabsnap" setup --bogus 2>&1)" "unknown option --bogus"
+
 echo "restore"
 SNAP="$WORK/snaps/tabs_2026-01-01_00-00-00.md"
 mkdir -p "$WORK/snaps"
@@ -130,6 +151,41 @@ expect "opt-in sends full url" "$(cat "$WORK/request.json")" "e?token=SECRET#fra
 out=$(PATH="/usr/bin:/bin:${$(command -v jq):h}" env -u ANTHROPIC_API_KEY "$REPO/tabsnap" triage "$SNAP" 2>&1)
 expect "no key and no claude → clear error" "$out" "needs either ANTHROPIC_API_KEY or the Claude Code CLI"
 
+echo "search"
+SD="$WORK/search"; mkdir -p "$SD"
+printf -- '## Brave Browser — 2 tabs\n\n- [ ] [Super Egg Drop - LeetCode](https://leetcode.com/problems/super-egg-drop/)\n- [ ] [Bus Routes](https://leetcode.com/problems/bus-routes/)\n' > "$SD/tabs_2026-01-01_09-00-00.md"
+printf -- '## Brave Browser — 1 tabs\n\n- [x] [Super Egg Drop - LeetCode](https://leetcode.com/problems/super-egg-drop/)\n' > "$SD/tabs_2026-01-03_09-00-00.md"
+printf -- '## DP (1)\n\n- [ ] [Bus Routes](https://leetcode.com/problems/bus-routes/) — BFS over routes, hard graph problem `📖 read later`\n' > "$SD/tabs_2026-01-01_09-00-00.triage.md"
+out=$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search EGG drop --json)
+expect "search is case-insensitive, all words" "$out" '"title": "Super Egg Drop - LeetCode"'
+expect "search reports latest sighting" "$(print -r -- "$out" | jq -r '.[0].last_seen')" "2026-01-03 09:00"
+expect "search counts snapshots" "$(print -r -- "$out" | jq -r '.[0].snapshots')" "2"
+expect "search shows ticked state" "$(print -r -- "$out" | jq -r '.[0].done')" "true"
+out=$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search bfs graph --json)
+expect "search matches triage notes" "$(print -r -- "$out" | jq -r '.[0].url')" "bus-routes"
+expect "note-only match still counts snapshots" "$(print -r -- "$out" | jq -r '.[0].snapshots')" "1"
+expect "search text output" "$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search egg)" "seen in 2 snapshots"
+expect "search with no hits" "$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search zzz)" "No tabs match"
+expect "search needs words" "$("$REPO/tabsnap" search 2>&1)" "usage: tabsnap search"
+expect "search empty dir json" "$(TABSNAP_DIR="$WORK/nothing" "$REPO/tabsnap" search x --json)" "[]"
+expect "search knows the browser" "$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search egg --json | jq -r '.[0].browser')" "Brave Browser"
+printf -- '## Safari — 1 tabs\n\n- [ ] [Plain page](https://example.com/page?utm=zzzqqq#frag)\n' > "$SD/tabs_2026-01-02_09-00-00.md"
+expect_not "search ignores query strings" "$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search zzzqqq --json)" "example.com"
+out=$(TABSNAP_DIR="$SD" "$REPO/tabsnap" search leetcode --restore --dry-run)
+expect "search --restore previews" "$out" "Would reopen 2 tabs from 2 requested pages:"
+expect "search --restore uses saved browser" "$out" "[Brave Browser] https://leetcode.com/problems/super-egg-drop/"
+expect "--dry-run needs --restore" "$("$REPO/tabsnap" search x --dry-run 2>&1)" "--dry-run goes with --restore"
+
+echo "restore specific pages"
+out=$("$REPO/tabsnap" restore --dry-run --url https://e.com/a --url=https://e.com/b --url https://e.com/a --browser safari)
+expect "--url dedupes and targets browser" "$out" "Would reopen 2 tabs from 3 requested pages (skipped 1 duplicate"
+expect "--url uses --browser" "$out" "[Safari] https://e.com/b"
+out=$(print -r -- '[{"url":"https://e.com/a","browser":"Safari"},{"url":"https://e.com/b"},{"title":"no url"}]' | "$REPO/tabsnap" restore --from-json - --dry-run)
+expect "--from-json keeps each browser" "$out" "[Safari] https://e.com/a"
+expect "--from-json skips entries without url" "$out" "Would reopen 2 tabs"
+expect "--from-json rejects non-lists" "$(print -r -- '{"url":"x"}' | "$REPO/tabsnap" restore --from-json - --dry-run 2>&1)" "needs a JSON list"
+expect "file and --url conflict" "$("$REPO/tabsnap" restore x.md --url https://e.com 2>&1)" "not both"
+
 echo "snapshot"
 # Reads whatever browsers are running (none on CI); only checks the file gets written.
 out=$(TABSNAP_DIR="$WORK/capture" "$REPO/tabsnap" "ci note" 2>&1)
@@ -139,6 +195,8 @@ file=("$WORK"/capture/tabs_*.md(N))
 out=$(TABSNAP_DIR="$WORK/capture2" "$REPO/tabsnap" 'keeps \n and $HOME literally' 2>&1)
 file=("$WORK"/capture2/tabs_*.md(N))
 [[ -n "$file" ]] && expect "note keeps backslashes" "$(cat "$file[1]")" '> keeps \n and $HOME literally' || fail "second snapshot file exists"
+out=$(TABSNAP_DIR="$WORK/json" "$REPO/tabsnap" --json 2>/dev/null)
+print -r -- "$out" | jq -e 'has("file") and has("total") and has("closed")' >/dev/null && ok "snapshot --json prints only JSON" || fail "snapshot --json prints only JSON" "$out"
 TABSNAP_DIR="$WORK/same" "$REPO/tabsnap" a >/dev/null 2>&1; TABSNAP_DIR="$WORK/same" "$REPO/tabsnap" b >/dev/null 2>&1
 same=("$WORK"/same/tabs_*.md(N)); [[ ${#same} == 2 ]] && ok "same-second snapshots don't overwrite" || fail "same-second snapshots don't overwrite" "${#same} files"
 

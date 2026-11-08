@@ -7,11 +7,17 @@ Works with Brave, Chrome, Arc, Edge and Safari on macOS.
 ## Install
 
 ```sh
-brew install paragdudeja/tap/tabsnap
-tabsnap setup
+brew install paragdudeja/tap/tabsnap && tabsnap setup
 ```
 
-`tabsnap setup` asks macOS for access to your open browsers, writes a config file, links the menu bar plugin if you use SwiftBar, and checks whether AI triage is available. It's safe to re-run, for example after opening another browser.
+`tabsnap setup` walks you through the rest:
+
+- asks macOS for access to your open browsers (click **Allow**),
+- writes a config file you can edit later,
+- offers a live tab counter in your menu bar, installing the free [SwiftBar](https://github.com/swiftbar/SwiftBar) app for you,
+- offers to teach Claude Code to use tabsnap (see [AI agents](#ai-agents)).
+
+It's safe to re-run, for example after opening another browser. `tabsnap setup --yes` accepts everything without asking; `--no-menu-bar` and `--no-skill` skip those parts.
 
 ## Usage
 
@@ -23,9 +29,14 @@ tabsnap --close --triage        # snapshot, close, then AI-triage
 tabsnap --close --window front  # save and close just the window you're in
 tabsnap triage                  # AI-triage the latest snapshot
 tabsnap restore                 # reopen tabs you haven't ticked off
+tabsnap search egg drop         # find a tab across all your snapshots
+tabsnap search egg drop --restore  # …and reopen it
+tabsnap list                    # show open tabs without saving anything
 tabsnap count                   # how many tabs are open right now
 tabsnap config                  # show your settings
 ```
+
+Add `--json` to a snapshot, `list`, `search` or `config` for machine-readable output.
 
 Snapshots are saved to `~/tab-snapshots/` by default:
 
@@ -67,14 +78,24 @@ tabsnap restore --all-copies              # reopen duplicate tabs too
 tabsnap restore ~/tab-snapshots/tabs_2026-11-08_12-15-26.triage.md
 ```
 
+## Search
+
+`tabsnap search` finds tabs in every snapshot you've taken, matching all your words against titles, URLs and triage notes. Each page appears once, with when you last had it open:
+
+```
+$ tabsnap search egg drop
+2026-11-08 12:15  Super Egg Drop - LeetCode
+                  https://leetcode.com/problems/super-egg-drop/description/
+                  seen in 1 snapshot · Super Egg Drop: hard DP.
+```
+
+Add `--restore` to reopen the matches, each once, in the browser it was saved from (`--dry-run` to preview; it asks before opening more than 5). To reopen particular pages, use `tabsnap restore --url URL [--url URL…]`, or pipe search results straight in: `tabsnap search egg drop --json | tabsnap restore --from-json -`.
+
 ## Menu bar
 
 A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin shows your open-tab count in the menu bar (orange once you pass your `warn` limit) and puts every command one click away: snapshot, snapshot + close (everything or just the front window), triage, restore, and open the latest files.
 
-```sh
-brew install --cask swiftbar   # open SwiftBar once and pick a plugin folder
-tabsnap setup                  # links the plugin
-```
+`tabsnap setup` installs SwiftBar and adds the plugin for you. Already use SwiftBar? It just links the plugin into your plugin folder.
 
 ## Config
 
@@ -99,6 +120,23 @@ It uses whichever of these you have:
 
 - **Claude Code**: if the `claude` CLI is installed and logged in, triage runs through it. No API key needed.
 - **Anthropic API key**: `export ANTHROPIC_API_KEY=sk-ant-...` (takes priority when set).
+
+## AI agents
+
+tabsnap ships a skill that teaches Claude Code (and other agents that read skills) to use it, so you can just ask:
+
+- "What tabs do I have open? Summarize them."
+- "Save this window and close it."
+- "Find that Fenwick tree article I had open last week." / "Bring it back."
+- "Reopen what I didn't finish yesterday."
+
+`tabsnap setup` offers to install it. In Claude Code you can also run:
+
+```
+/plugin install tabsnap --marketplace paragdudeja/tabsnap
+```
+
+The skill tells the agent to close tabs only when you ask, to show what `restore` will open before opening it, and to keep your snapshots private. Other agents can read `skills/tabsnap/SKILL.md` directly.
 
 ## Privacy
 

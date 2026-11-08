@@ -1,0 +1,98 @@
+#!/bin/zsh
+# tabsnap-search — find tabs across all your snapshots (and triage notes), and reopen them.
+# Usage: tabsnap-search WORDS… [--json] [--limit N] [--restore [--dry-run]]
+#   --restore  reopen every match, once each, in the browser it was saved from
+#              (asks first in a terminal when that's more than 5 tabs)
+#   --dry-run  with --restore: list what would open
+# Every word must appear (case-insensitive) in the tab's title, URL or triage note.
+# Results are one per URL, most recently seen first.
+
+set -e
+OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+JSON=0
+LIMIT=20
+RESTORE=0
+DRY=0
+WORDS=()
+while (( $# )); do
+  case "$1" in
+    --json) JSON=1 ;;
+    --restore) RESTORE=1 ;;
+    --dry-run) DRY=1 ;;
+    --limit) [[ "$2" == <-> ]] || { echo "tabsnap search: --limit needs a number" >&2; exit 2; }; LIMIT="$2"; shift ;;
+    --limit=*) LIMIT="${1#*=}" ;;
+    -*) echo "tabsnap search: unknown option $1" >&2; exit 2 ;;
+    *) WORDS+=("$1") ;;
+  esac
+  shift
+done
+(( ${#WORDS} )) || { echo "usage: tabsnap search WORDS… [--json] [--limit N] [--restore [--dry-run]]" >&2; exit 2; }
+(( DRY && ! RESTORE )) && { echo "tabsnap search: --dry-run goes with --restore" >&2; exit 2; }
+
+files=("$OUT_DIR"/tabs_*.md(N))
+if (( ! ${#files} )); then
+  (( JSON )) && echo "[]" || echo "No snapshots in $OUT_DIR yet."
+  exit 0
+fi
+
+RESULTS=$(jq -Rn --argjson limit "$LIMIT" --arg words "${(j: :)WORDS}" '
+  def when: capture("tabs_(?<d>[0-9]{4}-[0-9]{2}-[0-9]{2})_(?<h>[0-9]{2})-(?<m>[0-9]{2})") | "\(.d) \(.h):\(.m)";
+  ($words | ascii_downcase | split(" ") | map(select(. != ""))) as $want
+  # Walk every line, remembering the "## <Browser> — N tabs" section (per file) above it
+  | ["Brave Browser", "Google Chrome", "Arc", "Microsoft Edge", "Safari"] as $known
+  | reduce inputs as $line ({file: null, browser: null, items: []};
+      input_filename as $f
+      | (if .file != $f then .file = $f | .browser = null else . end)
+      | if ($line | test("^## ")) then
+          ([$line | capture("^## (?<b>.+) — [0-9]+ tabs$")?.b] | first) as $b
+          | .browser = (if $b and ($known | index($b)) then $b else null end)
+        else
+          ([$line | capture("^\\s*[-*+]\\s+\\[(?<chk>[ xX])\\]\\s+\\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)(?: — (?<note>.*?)(?: `[^`]*`)?)?\\s*$")?] | first) as $m
+          | if $m then .items += [{title: ($m.title | gsub("\\\\(?<c>[\\[\\]])"; .c)), url: $m.url,
+                done: ($m.chk != " "), note: $m.note, browser: .browser, file: $f,
+                triage: ($f | endswith(".triage.md")), when: ($f | when)}]
+            else . end
+        end)
+  | .items
+  # Group first, then keep URLs where any copy matches, so counts cover every snapshot
+  | group_by(.url)
+  # Query strings are mostly tracking tokens that match random words, so leave them out
+  | map(select(any(.[]; ((.title + " " + (.url | sub("[?#].*$"; "")) + " " + (.note // "")) | ascii_downcase) as $hay
+                         | all($want[]; . as $w | $hay | contains($w)))))
+  | map(sort_by(.when) | reverse
+        | (map(select(.triage | not))) as $snaps
+        | {title: ($snaps[0].title // .[0].title), url: .[0].url, last_seen: .[0].when,
+           browser: ($snaps | map(.browser) | map(select(. != null)) | first),
+           snapshots: ($snaps | map(.file) | unique | length),
+           done: ($snaps[0].done // false),
+           note: (map(select(.triage))[0].note),
+           file: ($snaps[0].file // .[0].file)})
+  | sort_by(.last_seen) | reverse | .[:$limit]' "${files[@]}")
+
+if (( RESTORE )); then
+  if [[ "$(print -r -- "$RESULTS" | jq length)" == 0 ]]; then echo "No tabs match: ${WORDS[*]}"; exit 0; fi
+  n=$(print -r -- "$RESULTS" | jq length)
+  if (( ! DRY && n > 5 )) && [[ -t 0 && -t 1 ]]; then
+    read -r "reply?Reopen $n tabs matching \"${WORDS[*]}\"? [y/N] "
+    [[ "$reply" == [Yy]* ]] || { echo "Nothing opened. See them with: tabsnap search ${WORDS[*]} --restore --dry-run"; exit 0; }
+  fi
+  # Hand the matches to restore, which reopens each in the browser it was saved from
+  print -r -- "$RESULTS" | "${0:A:h}/tabsnap-restore" --from-json - $( (( DRY )) && echo --dry-run)
+  exit $?
+fi
+if (( JSON )); then
+  print -r -- "$RESULTS"
+  exit 0
+fi
+COUNT=$(print -r -- "$RESULTS" | jq length)
+if (( COUNT == 0 )); then
+  echo "No tabs match: ${WORDS[*]}"
+  exit 0
+fi
+print -r -- "$RESULTS" | jq -r --arg home "$HOME" '.[] |
+  "\(.last_seen)  \(if .done then "✓ " else "" end)\(.title)",
+  "                  \(.url)",
+  "                  seen in \(.snapshots) snapshot\(if .snapshots == 1 then "" else "s" end)\(if .note then " · " + .note else "" end)",
+  ""'
+(( COUNT == LIMIT )) && echo "(showing the $LIMIT most recent; --limit N for more)"
+exit 0

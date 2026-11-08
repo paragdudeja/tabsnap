@@ -5,19 +5,22 @@
 #   --triage   have Claude group and annotate the snapshot (see tabsnap-triage)
 #   --browser  only this browser: brave, chrome, arc, edge or safari
 #   --window   only the front window, or a window you named in Chrome/Brave/Edge
+#   --json     print a JSON summary (human messages go to stderr)
 #   e.g. tabsnap --close --window front "done with this research"
-#        tabsnap setup   grant browser access, write a config file, link the menu bar plugin
+#        tabsnap list [--json] [--browser NAME] [--window front|NAME]   show open tabs, save nothing
+#        tabsnap search WORDS… [--json] [--limit N]   find tabs across all your snapshots
+#        tabsnap setup [--yes]   browser access, config file, menu bar counter, Claude Code skill
 #        tabsnap triage [snapshot.md]   triage an existing snapshot (default: latest)
 #        tabsnap restore [--all] [--all-copies] [--dry-run] [file.md]   reopen unticked tabs, once per URL
 #        tabsnap count   print how many tabs are open (never launches a browser)
-#        tabsnap config  show the config file path and current settings
+#        tabsnap config [--json]  show the config file path and current settings
 # Incognito windows are never saved, counted or closed.
 
 set -e
 HERE="${0:A:h}"
 VERSION=0.2.4
 case "$1" in
-  -h|--help) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,17s/^# \{0,1\}//p' "$0"; exit 0 ;;
   -v|--version) echo "tabsnap $VERSION"; exit 0 ;;
 esac
 
@@ -66,8 +69,15 @@ EOF
 }
 
 case "$1" in
-  triage|restore|setup) cmd="$1"; shift; exec "$HERE/tabsnap-$cmd" "$@" ;;
+  triage|restore|setup|search) cmd="$1"; shift; exec "$HERE/tabsnap-$cmd" "$@" ;;
   config)
+    if [[ "$2" == --json ]]; then
+      jq -n --arg file "$CONFIG" --argjson exists "$([[ -f "$CONFIG" ]] && echo true || echo false)" \
+        --arg dir "$TABSNAP_DIR" --arg warn "$TABSNAP_WARN" --arg keep "$TABSNAP_KEEP" --arg model "$TABSNAP_MODEL" \
+        '{config_file: $file, config_exists: $exists, dir: $dir, warn: ($warn | tonumber? // $warn),
+          keep: ($keep | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))), model: $model}'
+      exit 0
+    fi
     echo "config file: $CONFIG$([[ -f "$CONFIG" ]] || echo " (not created; run tabsnap setup)")"
     echo "dir   = $TABSNAP_DIR"
     echo "warn  = $TABSNAP_WARN"
@@ -94,8 +104,11 @@ JXA
     exit 0 ;;
 esac
 
+LIST=0
+[[ "$1" == list ]] && { LIST=1; shift; }
 CLOSE=0
 TRIAGE=0
+JSON=0
 NOTE=""
 BROWSER_ARG=""
 WINDOW_ARG=""
@@ -103,6 +116,7 @@ while (( $# )); do
   case "$1" in
     --close) CLOSE=1 ;;
     --triage) TRIAGE=1 ;;
+    --json) JSON=1 ;;
     --browser|--window)
       [[ -n "$2" ]] || { echo "tabsnap: $1 needs a value" >&2; exit 2; }
       [[ "$1" == --browser ]] && BROWSER_ARG="$2" || WINDOW_ARG="$2"
@@ -115,6 +129,12 @@ while (( $# )); do
   shift
 done
 
+if (( LIST )) && (( CLOSE + TRIAGE )) || { (( LIST )) && [[ -n "$NOTE" ]]; }; then
+  echo "tabsnap list only shows tabs; it takes --json, --browser and --window" >&2; exit 2
+fi
+# With --json, stdout carries only the JSON; everything meant for people goes to stderr
+say() { if (( JSON )); then print -r -- "$*" >&2; else print -r -- "$*"; fi; }
+
 if [[ -n "$BROWSER_ARG" ]]; then
   matches=()
   for b in "Brave Browser" "Google Chrome" "Arc" "Microsoft Edge" "Safari"; do
@@ -125,7 +145,6 @@ if [[ -n "$BROWSER_ARG" ]]; then
 fi
 
 OUT_DIR="$TABSNAP_DIR"
-mkdir -p "$OUT_DIR"
 STAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 HUMAN=$(date +"%Y-%m-%d %H:%M:%S %Z")
 FILE="$OUT_DIR/tabs_$STAMP.md"
@@ -146,7 +165,7 @@ function run(argv) {
     if (!hit.length) return JSON.stringify({error: "front-ambiguous", running: targets.map(t => t[0])});
     targets = hit;
   }
-  let out = [], total = 0, urls = {}, denied = [], skipped = 0, names = [];
+  let out = [], total = 0, urls = {}, denied = [], skipped = 0, names = [], items = [];
   for (const [name, kind, app] of targets) {
     let wins;
     try { wins = app.windows(); wins.length; } catch (e) { if (isDenied(e)) denied.push(name); continue; }
@@ -170,6 +189,7 @@ function run(argv) {
         if (!url) continue;
         section.push(`- [ ] [${esc(title)}](${url})`);
         kept.push(url);
+        items.push({browser: name, window: i + 1, window_name: nameOf(w) || null, title: (title || "").trim(), url});
         count++;
       }
       // Remember which window each URL came from, so --close only touches these windows
@@ -180,7 +200,7 @@ function run(argv) {
   }
   if (windowSel && windowSel !== "front" && !total && !skipped && !denied.length)
     return JSON.stringify({error: "no-window", names});
-  return JSON.stringify({total, urls, denied, skipped, body: out.join("\n")});
+  return JSON.stringify({total, urls, denied, skipped, items, body: out.join("\n")});
 }
 JXA
 )
@@ -206,10 +226,20 @@ if [[ "$DENIED" != "[]" ]]; then
   denied_help "$DENIED"
   (( TOTAL > 0 )) || exit 3
 fi
-if (( TOTAL == 0 )) && [[ -n "$BROWSER_ARG$WINDOW_ARG" ]]; then
-  echo "Nothing to save: no tabs in ${WINDOW_ARG:+the $WINDOW_ARG window of }${BROWSER_ARG:-any open browser}$( (( SKIPPED )) && echo " (only incognito)")."
+if (( LIST )); then
+  if (( JSON )); then print -r -- "$RAW" | jq '{total, skipped_incognito: .skipped, tabs: .items}'
+  else
+    print -r -- "$RAW" | jq -r .body | grep -v '^$' | sed 's/^- \[ \] /- /'
+    (( SKIPPED > 0 )) && echo "($SKIPPED incognito tabs not shown)"
+  fi
   exit 0
 fi
+if (( TOTAL == 0 )) && [[ -n "$BROWSER_ARG$WINDOW_ARG" ]]; then
+  say "Nothing to save: no tabs in ${WINDOW_ARG:+the $WINDOW_ARG window of }${BROWSER_ARG:-any open browser}$( (( SKIPPED )) && echo " (only incognito)")."
+  (( JSON )) && jq -n --argjson skipped "$SKIPPED" '{file: null, total: 0, skipped_incognito: $skipped, closed: 0, kept: 0}'
+  exit 0
+fi
+mkdir -p "$OUT_DIR"
 
 SCOPE="${BROWSER_ARG}${BROWSER_ARG:+${WINDOW_ARG:+ · }}${WINDOW_ARG:+$([[ "$WINDOW_ARG" == front ]] && echo "front window" || echo "window \"$WINDOW_ARG\"")}"
 {
@@ -221,8 +251,10 @@ SCOPE="${BROWSER_ARG}${BROWSER_ARG:+${WINDOW_ARG:+ · }}${WINDOW_ARG:+$([[ "$WIN
   print -r -- "$RAW" | jq -r .body
 } > "$FILE"
 
-echo "Saved $TOTAL tabs${SCOPE:+ ($SCOPE)} → $FILE"
-(( SKIPPED > 0 )) && echo "Skipped $SKIPPED incognito tabs (not saved, not closed)"
+say "Saved $TOTAL tabs${SCOPE:+ ($SCOPE)} → $FILE"
+(( SKIPPED > 0 )) && say "Skipped $SKIPPED incognito tabs (not saved, not closed)"
+CLOSED=0
+KEPT=0
 
 if (( CLOSE )) && (( TOTAL > 0 )); then
   # Only close tabs whose URLs were captured, only in the windows they were captured from,
@@ -261,10 +293,20 @@ function run(argv) {
 JXA
 )
   CLOSED=$(print -r -- "$JXA_COMMON$CLOSE_JS" | osascript -l JavaScript - "$TO_CLOSE")
-  echo "Closed $CLOSED tabs$( (( KEPT > 0 )) && echo " (kept $KEPT on your keep list)")"
+  say "Closed $CLOSED tabs$( (( KEPT > 0 )) && echo " (kept $KEPT on your keep list)")"
 fi
 
 # Triage last, so a failed API call never blocks saving or closing
+TRIAGE_FILE=""
 if (( TRIAGE )) && (( TOTAL > 0 )); then
-  "$HERE/tabsnap-triage" "$FILE" || echo "Triage failed; snapshot is still saved. Retry with: tabsnap triage \"$FILE\""
+  if (( JSON )); then "$HERE/tabsnap-triage" "$FILE" >&2; else "$HERE/tabsnap-triage" "$FILE"; fi \
+    && TRIAGE_FILE="${FILE%.md}.triage.md" \
+    || say "Triage failed; snapshot is still saved. Retry with: tabsnap triage \"$FILE\""
+fi
+
+if (( JSON )); then
+  jq -n --arg file "$FILE" --argjson total "$TOTAL" --argjson skipped "$SKIPPED" --arg scope "$SCOPE" \
+    --argjson closed "$CLOSED" --argjson kept "$KEPT" --arg triage "$TRIAGE_FILE" \
+    '{file: $file, total: $total, scope: (if $scope == "" then null else $scope end), skipped_incognito: $skipped,
+      closed: $closed, kept: $kept, triage_file: (if $triage == "" then null else $triage end)}'
 fi
