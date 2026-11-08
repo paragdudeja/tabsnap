@@ -1,17 +1,51 @@
 #!/bin/zsh
-# release — publish a new tabsnap version and update the Homebrew tap.
-# Usage: ./release <version> [--dry-run]     e.g. ./release 0.2.0
+# release — publish a new tabsnap version, update the Homebrew tap, and post release notes.
+# Usage: ./release <version> [--dry-run]     e.g. ./release 0.2.4
+#        ./release notes <version>           (re)publish GitHub release notes for an existing tag
+# Release notes come from CHANGELOG.md: write them under "## [Unreleased]" before releasing.
 # Tap checkout: $TAP_DIR (default ../homebrew-tap next to this repo)
 
 set -e
 REPO="${0:A:h}"
 TAP="${TAP_DIR:-$REPO/../homebrew-tap}"
 FORMULA="$TAP/Formula/tabsnap.rb"
+CHANGELOG="$REPO/CHANGELOG.md"
+GH_REPO=paragdudeja/tabsnap
+
+die() { echo "release: $*" >&2; exit 1; }
+
+# Body of one CHANGELOG section ("Unreleased" or a version), without its heading
+section() {
+  awk -v want="$1" '
+    /^## \[/ { if (inside) exit; if (index($0, "## [" want "]") == 1) { inside = 1; next } }
+    inside' "$CHANGELOG" | sed -e '/./,$!d' | sed -e :a -e '/^\n*$/{$d;N;ba' -e '}'
+}
+
+publish_notes() {  # $1 = version; creates the GitHub release, or updates it if it exists
+  local version="$1" notes
+  notes=$(section "$version")
+  [[ -n "$notes" ]] || die "CHANGELOG.md has no notes for $version"
+  notes+=$'\n\n'"**Install:** \`brew install paragdudeja/tap/tabsnap\` · **Upgrade:** \`brew upgrade tabsnap\`"
+  if gh release view "v$version" -R "$GH_REPO" >/dev/null 2>&1; then
+    gh release edit "v$version" -R "$GH_REPO" --title "tabsnap $version" --notes "$notes" >/dev/null
+    echo "Updated release notes for v$version"
+  else
+    gh release create "v$version" -R "$GH_REPO" --verify-tag --title "tabsnap $version" --notes "$notes" >/dev/null
+    echo "Published release notes for v$version"
+  fi
+}
+
+command -v gh >/dev/null && gh auth status >/dev/null 2>&1 || die "needs the GitHub CLI, logged in (gh auth login)"
+
+if [[ "$1" == notes ]]; then
+  [[ -n "$2" ]] || die "usage: ./release notes <version>"
+  publish_notes "$2"
+  exit 0
+fi
+
 VERSION="$1"
 DRY=0
 [[ "$2" == --dry-run ]] && DRY=1
-
-die() { echo "release: $*" >&2; exit 1; }
 run() { if (( DRY )); then echo "  [dry-run] $*"; else "$@"; fi; }
 
 [[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || die "usage: ./release <major.minor.patch> [--dry-run]"
@@ -24,6 +58,8 @@ cd "$REPO"
 git fetch -q --tags origin
 git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
 [[ -z "$(git -C "$TAP" status --porcelain -- . ':!Formula/tabsnap.rb')" ]] || die "tap repo has uncommitted changes outside Formula/tabsnap.rb"
+grep -q '^## \[Unreleased\]' "$CHANGELOG" || die "CHANGELOG.md has no '## [Unreleased]' section"
+[[ -n "$(section Unreleased)" ]] || die "nothing under '## [Unreleased]' in CHANGELOG.md; write the release notes first"
 
 # Every script the formula installs must exist, and every tabsnap-* script must be installed
 for f in tabsnap tabsnap-*(N); do
@@ -31,16 +67,21 @@ for f in tabsnap tabsnap-*(N); do
 done
 
 echo "Releasing tabsnap $TAG"
+echo "→ Release notes:"
+section Unreleased | sed 's/^/    /'
 
-echo "→ Bump version in tabsnap"
+echo "→ Bump version and date the changelog"
 run sed -i '' "s/^VERSION=.*/VERSION=$VERSION/" tabsnap
-run git add tabsnap
+run sed -i '' "s/^## \[Unreleased\]\$/## [Unreleased]\\
+\\
+## [$VERSION] - $(date +%Y-%m-%d)/" "$CHANGELOG"
+run git add tabsnap CHANGELOG.md
 run git commit -q -m "Release $TAG" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 run git tag "$TAG"
 run git push -q origin main "$TAG"
 
 echo "→ Update formula"
-URL="https://github.com/paragdudeja/tabsnap/archive/refs/tags/$TAG.tar.gz"
+URL="https://github.com/$GH_REPO/archive/refs/tags/$TAG.tar.gz"
 if (( DRY )); then
   SHA="<sha256 of $URL>"
 else
@@ -50,5 +91,8 @@ run sed -i '' -e "s|^  url \".*\"|  url \"$URL\"|" -e "s|^  sha256 \".*\"|  sha2
 run git -C "$TAP" add Formula/tabsnap.rb
 run git -C "$TAP" commit -q -m "tabsnap $VERSION" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 run git -C "$TAP" push -q origin main
+
+echo "→ GitHub release"
+run publish_notes "$VERSION"
 
 echo "Done. Users get it with: brew update && brew upgrade tabsnap"
