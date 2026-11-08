@@ -20,7 +20,9 @@ fi
 
 SNAP="$1"
 if [[ -z "$SNAP" ]]; then
-  SNAP=$(ls -t "$OUT_DIR"/tabs_*.md 2>/dev/null | grep -v '\.triage\.md$' | head -1)
+  snaps=("$OUT_DIR"/tabs_*.md(N.om))   # newest first; (N) = no error when empty
+  snaps=(${snaps:#*.triage.md})
+  SNAP="$snaps[1]"
   [[ -z "$SNAP" ]] && { echo "No snapshots found in $OUT_DIR" >&2; exit 1; }
 fi
 [[ -f "$SNAP" ]] || { echo "Not found: $SNAP" >&2; exit 1; }
