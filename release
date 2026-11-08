@@ -1,0 +1,54 @@
+#!/bin/zsh
+# release — publish a new tabsnap version and update the Homebrew tap.
+# Usage: ./release <version> [--dry-run]     e.g. ./release 0.2.0
+# Tap checkout: $TAP_DIR (default ../homebrew-tap next to this repo)
+
+set -e
+REPO="${0:A:h}"
+TAP="${TAP_DIR:-$REPO/../homebrew-tap}"
+FORMULA="$TAP/Formula/tabsnap.rb"
+VERSION="$1"
+DRY=0
+[[ "$2" == --dry-run ]] && DRY=1
+
+die() { echo "release: $*" >&2; exit 1; }
+run() { if (( DRY )); then echo "  [dry-run] $*"; else "$@"; fi; }
+
+[[ "$VERSION" =~ '^[0-9]+\.[0-9]+\.[0-9]+$' ]] || die "usage: ./release <major.minor.patch> [--dry-run]"
+TAG="v$VERSION"
+[[ -f "$FORMULA" ]] || die "formula not found at $FORMULA (set TAP_DIR)"
+
+cd "$REPO"
+[[ "$(git branch --show-current)" == main ]] || die "tabsnap repo is not on main"
+[[ -z "$(git status --porcelain)" ]] || die "tabsnap repo has uncommitted changes; commit them first"
+git fetch -q --tags origin
+git rev-parse -q --verify "refs/tags/$TAG" >/dev/null && die "tag $TAG already exists"
+[[ -z "$(git -C "$TAP" status --porcelain -- . ':!Formula/tabsnap.rb')" ]] || die "tap repo has uncommitted changes outside Formula/tabsnap.rb"
+
+# Every script the formula installs must exist, and every tabsnap-* script must be installed
+for f in tabsnap tabsnap-*(N); do
+  grep -q "\"$f\"" "$FORMULA" || die "$f is not listed in bin.install in $FORMULA"
+done
+
+echo "Releasing tabsnap $TAG"
+
+echo "→ Bump version in tabsnap"
+run sed -i '' "s/^VERSION=.*/VERSION=$VERSION/" tabsnap
+run git add tabsnap
+run git commit -q -m "Release $TAG" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+run git tag "$TAG"
+run git push -q origin main "$TAG"
+
+echo "→ Update formula"
+URL="https://github.com/paragdudeja/tabsnap/archive/refs/tags/$TAG.tar.gz"
+if (( DRY )); then
+  SHA="<sha256 of $URL>"
+else
+  SHA=$(curl -fsSL "$URL" | shasum -a 256 | cut -d' ' -f1)
+fi
+run sed -i '' -e "s|^  url \".*\"|  url \"$URL\"|" -e "s|^  sha256 \".*\"|  sha256 \"$SHA\"|" "$FORMULA"
+run git -C "$TAP" add Formula/tabsnap.rb
+run git -C "$TAP" commit -q -m "tabsnap $VERSION" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
+run git -C "$TAP" push -q origin main
+
+echo "Done. Users get it with: brew update && brew upgrade tabsnap"

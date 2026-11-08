@@ -1,0 +1,63 @@
+#!/bin/zsh
+# tabsnap-restore — reopen the unticked tabs from a snapshot or triage file.
+# Usage: tabsnap-restore [--all] [--dry-run] [file.md]   (default: latest snapshot)
+#   --all      also reopen tabs you've ticked off (- [x])
+#   --dry-run  list what would open without opening anything
+# Tabs reopen in the browser they were saved from when it's installed, else the default browser.
+
+set -e
+OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+ALL=0
+DRY=0
+SNAP=""
+for arg in "$@"; do
+  case "$arg" in
+    --all) ALL=1 ;;
+    --dry-run) DRY=1 ;;
+    *) SNAP="$arg" ;;
+  esac
+done
+
+if [[ -z "$SNAP" ]]; then
+  SNAP=$(ls -t "$OUT_DIR"/tabs_*.md 2>/dev/null | grep -v '\.triage\.md$' | head -1)
+  [[ -z "$SNAP" ]] && { echo "No snapshots found in $OUT_DIR" >&2; exit 1; }
+fi
+[[ -f "$SNAP" ]] || { echo "Not found: $SNAP" >&2; exit 1; }
+
+# Snapshot "## <Browser> — N tabs" headers set the browser for the tabs below them;
+# triage files have theme headers instead, so those tabs get the default browser.
+TABS=$(jq -Rn --argjson all "$ALL" '
+  ["Brave Browser", "Google Chrome", "Arc", "Microsoft Edge", "Safari"] as $known
+  | reduce inputs as $line ({browser: "", tabs: []};
+      if ($line | test("^## ")) then
+        ($line | capture("^## (?<b>.+) — [0-9]+ tabs$")?.b // "") as $b
+        | .browser = (if ($known | index($b)) then $b else "" end)
+      else
+        ([$line | capture("^- \\[(?<chk>[ xX])\\] \\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)( — .*)?$")?] | first) as $m
+        | if $m and ($all == 1 or $m.chk == " ") then .tabs += [{browser: .browser, url: $m.url}] else . end
+      end)
+  | .tabs' < "$SNAP")
+
+COUNT=$(echo "$TABS" | jq length)
+if (( COUNT == 0 )); then
+  echo "Nothing to restore from $(basename "$SNAP")."
+  exit 0
+fi
+
+if (( DRY )); then
+  echo "Would reopen $COUNT tabs from $(basename "$SNAP"):"
+  echo "$TABS" | jq -r '.[] | "  [\(if .browser == "" then "default" else .browser end)] \(.url)"'
+  exit 0
+fi
+
+# One `open` call per browser keeps the tabs together in a single window
+echo "$TABS" | jq -r 'group_by(.browser)[] | [.[0].browser] + map(.url) | @json' | while read -r group; do
+  browser=$(echo "$group" | jq -r '.[0]')
+  urls=("${(@f)$(echo "$group" | jq -r '.[1:][]')}")
+  if [[ -n "$browser" ]] && open -Ra "$browser" 2>/dev/null; then
+    open -a "$browser" "${urls[@]}"
+  else
+    open "${urls[@]}"
+  fi
+done
+echo "Reopened $COUNT tabs from $(basename "$SNAP")"

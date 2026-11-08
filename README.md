@@ -18,6 +18,7 @@ tabsnap "leetcode backlog"      # snapshot with a note
 tabsnap --close "done for today" # snapshot, then close the saved tabs
 tabsnap --close --triage        # snapshot, close, then AI-triage
 tabsnap triage                  # AI-triage the latest snapshot
+tabsnap restore                 # reopen tabs you haven't ticked off
 ```
 
 Snapshots are saved to `~/tab-snapshots/` (override with `TABSNAP_DIR`):
@@ -37,15 +38,24 @@ Snapshots are saved to `~/tab-snapshots/` (override with `TABSNAP_DIR`):
 
 `--close` only closes tabs whose URLs were saved, and only after the file is written.
 
+## Restore
+
+`tabsnap restore` reopens every unticked (`- [ ]`) tab from the latest snapshot, in the browser it was saved from. Tick off tabs as you deal with them and restore brings back only what's left. It also works on a triage file.
+
+```sh
+tabsnap restore --dry-run                 # list what would open
+tabsnap restore --all                     # include ticked tabs too
+tabsnap restore ~/tab-snapshots/tabs_2026-11-08_12-15-26.triage.md
+```
+
 ## AI triage
 
 `tabsnap triage` sends the tab titles and URLs (not page contents) to Claude and writes `<snapshot>.triage.md`: an overview, tabs grouped by theme with a one-line note each, an action per tab (📖 read later, 📌 reference, ✅ done, 🗑 drop), and duplicates.
 
-Requires an Anthropic API key:
+It uses whichever of these you have:
 
-```sh
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+- **Claude Code**: if the `claude` CLI is installed and logged in, triage runs through it. No API key needed.
+- **Anthropic API key**: `export ANTHROPIC_API_KEY=sk-ant-...` (takes priority when set).
 
 Uses `claude-opus-5-5` by default; set `TABSNAP_MODEL` to change it.
 

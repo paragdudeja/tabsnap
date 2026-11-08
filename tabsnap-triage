@@ -1,14 +1,20 @@
 #!/bin/zsh
 # tabsnap-triage — use Claude to group, annotate and triage a tab snapshot.
 # Usage: tabsnap-triage [snapshot.md]   (default: latest snapshot in $TABSNAP_DIR)
-# Writes <snapshot>.triage.md next to the snapshot. Needs ANTHROPIC_API_KEY.
+# Writes <snapshot>.triage.md next to the snapshot.
+# Calls the Claude API when ANTHROPIC_API_KEY is set, otherwise the Claude Code CLI
+# (`claude`), which uses your existing Claude login.
 
 set -e
 OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
 MODEL="${TABSNAP_MODEL:-claude-opus-5-5}"
 
-if [[ -z "$ANTHROPIC_API_KEY" ]]; then
-  echo "ANTHROPIC_API_KEY is not set. Get a key at https://platform.claude.com and export it in ~/.zshrc." >&2
+if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+  BACKEND=api
+elif command -v claude >/dev/null; then
+  BACKEND=claude
+else
+  echo "Triage needs either ANTHROPIC_API_KEY or the Claude Code CLI (claude) logged in." >&2
   exit 1
 fi
 
@@ -28,7 +34,7 @@ TABS=$(jq -Rn '
   | to_entries | map({id: (.key + 1), title: .value.title, url: .value.url})' < "$SNAP")
 COUNT=$(echo "$TABS" | jq length)
 (( COUNT > 0 )) || { echo "No tabs found in $SNAP" >&2; exit 1; }
-echo "Triaging $COUNT tabs from $(basename "$SNAP") with $MODEL…" >&2
+echo "Triaging $COUNT tabs from $(basename "$SNAP") with $MODEL via $BACKEND…" >&2
 
 PROMPT="These are browser tabs someone had open and is about to close. They saved this list so they can come back to what matters.
 
@@ -38,7 +44,7 @@ Group the tabs into a handful of themes (e.g. a topic they're studying, a work p
 - done: looks finished or one-off (search results, a login page, an already-read article)
 - drop: low value, or a duplicate of another tab
 
-Also list ids of tabs that point to the same page. Start with a 2-3 sentence overview of what this person was working on.
+The ids are only for your answer; never mention them in notes, since the reader won't see them (name the other tab instead). Also list ids of tabs that point to the same page. Start with a 2-3 sentence overview of what this person was working on.
 
 Tabs (id, title, url):
 $(echo "$TABS" | jq -r '.[] | "\(.id). \(.title) — \(.url)"')"
@@ -66,39 +72,52 @@ SCHEMA='{
     "duplicates": {"type": "array", "items": {"type": "array", "items": {"type": "integer"}}}
   }}'
 
-BODY=$(jq -n --arg model "$MODEL" --arg prompt "$PROMPT" --argjson schema "$SCHEMA" '{
-  model: $model,
-  max_tokens: 16000,
-  fallbacks: "default",
-  output_config: {effort: "medium", format: {type: "json_schema", schema: $schema}},
-  messages: [{role: "user", content: $prompt}]
-}')
-
 RESP_FILE=$(mktemp)
 trap 'rm -f "$RESP_FILE"' EXIT
-HTTP=$(curl -sS -o "$RESP_FILE" -w '%{http_code}' https://api.anthropic.com/v1/messages \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: $ANTHROPIC_API_KEY" \
-  -H "anthropic-version: 2026-10-21" \
-  -H "anthropic-beta: server-side-fallback-2026-07-01" \
-  -d "$BODY")
 
-if [[ "$HTTP" != 200 ]]; then
-  echo "API error ($HTTP): $(jq -r '.error.message // .' "$RESP_FILE")" >&2
-  exit 1
+if [[ "$BACKEND" == claude ]]; then
+  # Run outside any project so no CLAUDE.md or project settings leak in; no tools needed
+  (cd "${TMPDIR:-/tmp}" && claude -p "$PROMPT" --output-format json --json-schema "$SCHEMA" \
+    --tools "" --model "$MODEL" --effort medium --no-session-persistence) > "$RESP_FILE" || true
+  if ! jq -e '.is_error == false and .structured_output != null' "$RESP_FILE" >/dev/null 2>&1; then
+    echo "Claude Code CLI failed: $(jq -r '.result // .subtype // empty' "$RESP_FILE" 2>/dev/null || cat "$RESP_FILE")" >&2
+    exit 1
+  fi
+  RESULT=$(jq -c '.structured_output' "$RESP_FILE")
+  MODEL_USED=$(jq -r '.modelUsage | keys | first // empty' "$RESP_FILE")
+else
+  BODY=$(jq -n --arg model "$MODEL" --arg prompt "$PROMPT" --argjson schema "$SCHEMA" '{
+    model: $model,
+    max_tokens: 16000,
+    fallbacks: "default",
+    output_config: {effort: "medium", format: {type: "json_schema", schema: $schema}},
+    messages: [{role: "user", content: $prompt}]
+  }')
+
+  HTTP=$(curl -sS -o "$RESP_FILE" -w '%{http_code}' https://api.anthropic.com/v1/messages \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $ANTHROPIC_API_KEY" \
+    -H "anthropic-version: 2026-10-21" \
+    -H "anthropic-beta: server-side-fallback-2026-07-01" \
+    -d "$BODY")
+
+  if [[ "$HTTP" != 200 ]]; then
+    echo "API error ($HTTP): $(jq -r '.error.message // .' "$RESP_FILE")" >&2
+    exit 1
+  fi
+  STOP=$(jq -r '.stop_reason' "$RESP_FILE")
+  case "$STOP" in
+    end_turn) ;;
+    refusal) echo "Claude declined to triage this snapshot ($(jq -r '.stop_details.category // "no category"' "$RESP_FILE"))." >&2; exit 1 ;;
+    max_tokens) echo "Response was cut off (max_tokens). Try a smaller snapshot." >&2; exit 1 ;;
+    *) echo "Unexpected stop_reason: $STOP" >&2; exit 1 ;;
+  esac
+  RESULT=$(jq -r '[.content[] | select(.type == "text") | .text] | join("")' "$RESP_FILE")
+  MODEL_USED=$(jq -r .model "$RESP_FILE")
 fi
-STOP=$(jq -r '.stop_reason' "$RESP_FILE")
-case "$STOP" in
-  end_turn) ;;
-  refusal) echo "Claude declined to triage this snapshot ($(jq -r '.stop_details.category // "no category"' "$RESP_FILE"))." >&2; exit 1 ;;
-  max_tokens) echo "Response was cut off (max_tokens). Try a smaller snapshot." >&2; exit 1 ;;
-  *) echo "Unexpected stop_reason: $STOP" >&2; exit 1 ;;
-esac
-
-RESULT=$(jq -r '[.content[] | select(.type == "text") | .text] | join("")' "$RESP_FILE")
 
 jq -rn --argjson r "$RESULT" --argjson tabs "$TABS" \
-   --arg snap "$(basename "$SNAP")" --arg model "$(jq -r .model "$RESP_FILE")" '
+   --arg snap "$(basename "$SNAP")" --arg model "${MODEL_USED:-$MODEL}" '
   def badge: {read_later: "📖 read later", reference: "📌 reference", done: "✅ done", drop: "🗑 drop"}[.];
   ($tabs | map({(.id | tostring): .}) | add) as $byid
   | ([$r.groups[].tabs[].id] | unique) as $seen
