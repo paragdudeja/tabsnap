@@ -34,7 +34,7 @@ if [[ -f "$CONFIG" ]]; then
     value="${value#"${value%%[![:space:]]*}"}"
     value="${value%"${value##*[![:space:]]}"}"
     case "$key" in
-      dir|warn|keep|model) cfg[$key]="$value" ;;
+      dir|warn|keep|model|refresh) cfg[$key]="$value" ;;
       *) echo "tabsnap: ignoring unknown key '$key' in $CONFIG" >&2 ;;
     esac
   done < "$CONFIG"
@@ -44,6 +44,16 @@ export TABSNAP_DIR="${TABSNAP_DIR:-${${cfg[dir]:-$HOME/tab-snapshots}/#\~/$HOME}
 export TABSNAP_WARN="${TABSNAP_WARN:-${cfg[warn]:-30}}"
 export TABSNAP_KEEP="${TABSNAP_KEEP-${cfg[keep]}}"
 export TABSNAP_MODEL="${TABSNAP_MODEL:-${cfg[model]:-claude-opus-5-5}}"
+# How often the menu bar count refreshes: <number><s|m|h>, at least 5s
+TABSNAP_REFRESH="${TABSNAP_REFRESH:-${cfg[refresh]:-10s}}"
+if [[ ! "$TABSNAP_REFRESH" =~ '^[0-9]+[smh]$' ]]; then
+  echo "tabsnap: refresh '$TABSNAP_REFRESH' should look like 10s, 1m or 1h; using 10s" >&2
+  TABSNAP_REFRESH=10s
+elif [[ "$TABSNAP_REFRESH" == *s ]] && (( ${TABSNAP_REFRESH%s} < 5 )); then
+  echo "tabsnap: refresh $TABSNAP_REFRESH is too often; using 5s" >&2
+  TABSNAP_REFRESH=5s
+fi
+export TABSNAP_REFRESH
 
 # Shared by every JXA snippet below: browser list, incognito check, permission errors.
 JXA_COMMON='
@@ -73,9 +83,9 @@ case "$1" in
   config)
     if [[ "$2" == --json ]]; then
       jq -n --arg file "$CONFIG" --argjson exists "$([[ -f "$CONFIG" ]] && echo true || echo false)" \
-        --arg dir "$TABSNAP_DIR" --arg warn "$TABSNAP_WARN" --arg keep "$TABSNAP_KEEP" --arg model "$TABSNAP_MODEL" \
+        --arg dir "$TABSNAP_DIR" --arg warn "$TABSNAP_WARN" --arg keep "$TABSNAP_KEEP" --arg model "$TABSNAP_MODEL" --arg refresh "$TABSNAP_REFRESH" \
         '{config_file: $file, config_exists: $exists, dir: $dir, warn: ($warn | tonumber? // $warn),
-          keep: ($keep | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))), model: $model}'
+          keep: ($keep | split(",") | map(gsub("^\\s+|\\s+$"; "")) | map(select(. != ""))), model: $model, refresh: $refresh}'
       exit 0
     fi
     echo "config file: $CONFIG$([[ -f "$CONFIG" ]] || echo " (not created; run tabsnap setup)")"
@@ -83,6 +93,7 @@ case "$1" in
     echo "warn  = $TABSNAP_WARN"
     echo "keep  = $TABSNAP_KEEP"
     echo "model = $TABSNAP_MODEL"
+    echo "refresh = $TABSNAP_REFRESH"
     exit 0 ;;
   count)
     RES=$(osascript -l JavaScript <<JXA

@@ -106,11 +106,12 @@ dir   = ~/tab-snapshots                        # e.g. a folder in your Obsidian 
 warn  = 30                                     # menu bar turns orange from here
 keep  = mail.google.com, calendar.google.com   # --close never closes these (subdomains too)
 model = claude-opus-5-5                        # model for triage
+refresh = 10s                                  # how often the menu bar count updates (min 5s)
 ```
 
 **Pinned tabs:** browsers don't tell other apps which tabs are pinned, so tabsnap can't skip them automatically. Add their sites to `keep` instead (e.g. `keep = mail.google.com, calendar.google.com, app.slack.com`) and `--close` will leave them alone.
 
-Environment variables `TABSNAP_DIR`, `TABSNAP_WARN`, `TABSNAP_KEEP` and `TABSNAP_MODEL` override the file. `tabsnap config` shows what's in effect.
+Environment variables `TABSNAP_DIR`, `TABSNAP_WARN`, `TABSNAP_KEEP`, `TABSNAP_MODEL` and `TABSNAP_REFRESH` override the file. A new `refresh` value reaches the menu bar on its next update; no need to re-run setup. `tabsnap config` shows what's in effect.
 
 ## AI triage
 

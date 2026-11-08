@@ -4,6 +4,12 @@ All notable changes to tabsnap. New work goes under **Unreleased**; `./release` 
 
 ## [Unreleased]
 
+### Added
+- `refresh` setting for how often the menu bar count updates (`refresh = 30s`, `1m`, …; at least 5s). The menu bar picks up a change by itself.
+
+### Changed
+- The menu bar count now updates every 10 seconds by default (was every minute).
+
 ## [0.2.5] - 2026-11-08
 
 ### Added

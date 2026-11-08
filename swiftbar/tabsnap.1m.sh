@@ -21,7 +21,7 @@ WARN="${TABSNAP_WARN:-30}"
 # Pick up the user's config file (dir, warn) the same way the CLI does
 if [[ -n "$TABSNAP" ]]; then
   while read -r k _ v; do
-    case "$k" in dir) OUT_DIR="$v" ;; warn) WARN="$v" ;; esac
+    case "$k" in dir) OUT_DIR="$v" ;; warn) WARN="$v" ;; refresh) REFRESH="$v" ;; esac
   done < <("$TABSNAP" config 2>/dev/null | tail -n +2)
 fi
 SELF="${SWIFTBAR_PLUGIN_PATH:-$0}"
@@ -55,6 +55,12 @@ if [[ -n "$1" ]]; then
 fi
 
 # --- Menu ----------------------------------------------------------------
+# SwiftBar takes the refresh interval from the file name, so when the configured
+# interval changes, rename our link (only when SwiftBar runs us, and only a symlink)
+if [[ -n "$SWIFTBAR" && -n "$REFRESH" && -L "$SELF" && "${SELF:t}" == tabsnap.*.sh ]] \
+   && [[ "${SELF:t}" != "tabsnap.$REFRESH.sh" ]] && [[ ! -e "${SELF:h}/tabsnap.$REFRESH.sh" ]]; then
+  mv "$SELF" "${SELF:h}/tabsnap.$REFRESH.sh" && open -g "swiftbar://refreshallplugins"
+fi
 if [[ -z "$TABSNAP" ]]; then
   echo "tabs ? | sfimage=square.stack.3d.up.slash"
   echo "---"

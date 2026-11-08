@@ -79,6 +79,9 @@ dir = ~/tab-snapshots
 # Menu bar count turns orange at this many open tabs.
 warn = 30
 
+# How often the menu bar count updates (5s minimum; e.g. 10s, 30s, 1m).
+refresh = 10s
+
 # Never close tabs on these sites with --close (comma-separated; subdomains match too).
 keep = mail.google.com, calendar.google.com
 
@@ -91,6 +94,8 @@ mkdir -p "$OUT_DIR" && ok "snapshots go to $OUT_DIR"
 
 echo "Menu bar counter (optional)"
 plugin=$(shared swiftbar/tabsnap.1m.sh)
+# SwiftBar reads the refresh interval from the file name, so the link is named after it
+link_name="tabsnap.${TABSNAP_REFRESH:-10s}.sh"
 default_dir="$HOME/Library/Application Support/SwiftBar/Plugins"
 plugin_dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)
 plugin_dir="${plugin_dir/#\~/$HOME}"
@@ -99,7 +104,10 @@ installed=()
 if (( ! MENU )); then
   todo "skipped (--no-menu-bar)"
 elif [[ -n "$installed" ]] && grep -q '<xbar.title>tabsnap</xbar.title>' "$installed[1]" 2>/dev/null; then
-  ok "already in your menu bar (SwiftBar)"
+  if [[ "${installed[1]:t}" != "$link_name" ]] && [[ -L "$installed[1]" ]]; then
+    mv "$installed[1]" "$plugin_dir/$link_name" && open -g "swiftbar://refreshallplugins" 2>/dev/null
+  fi
+  ok "already in your menu bar (SwiftBar), refreshing every ${${link_name#tabsnap.}%.sh}"
 elif [[ -n "$installed" ]]; then
   warn "$installed[1] exists and isn't the tabsnap plugin; leaving it alone"
 elif [[ -z "$plugin" ]]; then
@@ -114,7 +122,7 @@ elif ask "Show your open-tab count in the menu bar? (uses the free SwiftBar app)
   if [[ -n "$plugin" ]]; then
     [[ -n "$plugin_dir" ]] || { plugin_dir="$default_dir"; defaults write com.ameba.SwiftBar PluginDirectory -string "$plugin_dir"; }
     mkdir -p "$plugin_dir"
-    ln -s "$plugin" "$plugin_dir/" \
+    ln -s "$plugin" "$plugin_dir/$link_name" \
       && { pgrep -xq SwiftBar && open -g "swiftbar://refreshallplugins" || open -g -a SwiftBar; } \
       && ok "added to your menu bar; click it for snapshot, close, triage and restore"
   fi

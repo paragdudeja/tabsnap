@@ -33,6 +33,21 @@ expect "parses warn" "$out" "warn  = 12"
 expect "warns on unknown key" "$out" "ignoring unknown key 'bogus'"
 expect "env beats file" "$(TABSNAP_CONFIG="$CFG" TABSNAP_WARN=99 "$REPO/tabsnap" config 2>/dev/null)" "warn  = 99"
 expect "defaults without file" "$(TABSNAP_CONFIG="$WORK/none" "$REPO/tabsnap" config)" "warn  = 30"
+expect "refresh defaults to 10s" "$(TABSNAP_CONFIG="$WORK/none" "$REPO/tabsnap" config)" "refresh = 10s"
+printf 'refresh = 30s\n' > "$WORK/cfg-refresh"
+expect "refresh from config" "$(TABSNAP_CONFIG="$WORK/cfg-refresh" "$REPO/tabsnap" config --json | jq -r .refresh)" "30s"
+expect "refresh has a 5s floor" "$(TABSNAP_REFRESH=1s "$REPO/tabsnap" config 2>&1)" "refresh = 5s"
+expect "bad refresh falls back" "$(TABSNAP_REFRESH=fast "$REPO/tabsnap" config 2>&1)" "should look like 10s"
+
+echo "menu bar plugin"
+TP="$WORK/plugins"; mkdir -p "$TP" "$WORK/shim"
+ln -s "$REPO/swiftbar/tabsnap.1m.sh" "$TP/tabsnap.1m.sh"
+printf '#!/bin/zsh\nexit 0\n' > "$WORK/shim/open"; chmod +x "$WORK/shim/open"   # never touch the real SwiftBar
+plug() { env -i HOME="$HOME" PATH="$WORK/shim:/usr/bin:/bin" TABSNAP_BIN="$REPO/tabsnap" TABSNAP_CONFIG="$WORK/none" "$@"; }
+plug SWIFTBAR=1 SWIFTBAR_PLUGIN_PATH="$TP/tabsnap.1m.sh" TABSNAP_REFRESH=10s "$TP/tabsnap.1m.sh" >/dev/null
+[[ -L "$TP/tabsnap.10s.sh" && ! -e "$TP/tabsnap.1m.sh" ]] && ok "plugin renames its link to the refresh setting" || fail "plugin renames its link" "$(ls "$TP")"
+plug TABSNAP_REFRESH=30s "$TP/tabsnap.10s.sh" >/dev/null
+[[ -e "$TP/tabsnap.10s.sh" ]] && ok "plugin never renames outside SwiftBar" || fail "plugin never renames outside SwiftBar" "$(ls "$TP")"
 
 echo "targeting"
 # These all fail during argument parsing, before any browser is touched
