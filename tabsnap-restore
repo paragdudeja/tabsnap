@@ -40,7 +40,7 @@ TABS=$(jq -Rn --argjson all "$ALL" '
       end)
   | .tabs' < "$SNAP")
 
-COUNT=$(echo "$TABS" | jq length)
+COUNT=$(print -r -- "$TABS" | jq length)
 if (( COUNT == 0 )); then
   echo "Nothing to restore from $(basename "$SNAP")."
   exit 0
@@ -48,14 +48,14 @@ fi
 
 if (( DRY )); then
   echo "Would reopen $COUNT tabs from $(basename "$SNAP"):"
-  echo "$TABS" | jq -r '.[] | "  [\(if .browser == "" then "default" else .browser end)] \(.url)"'
+  print -r -- "$TABS" | jq -r '.[] | "  [\(if .browser == "" then "default" else .browser end)] \(.url)"'
   exit 0
 fi
 
 # One `open` call per browser keeps the tabs together in a single window
-echo "$TABS" | jq -r 'group_by(.browser)[] | [.[0].browser] + map(.url) | @json' | while read -r group; do
-  browser=$(echo "$group" | jq -r '.[0]')
-  urls=("${(@f)$(echo "$group" | jq -r '.[1:][]')}")
+print -r -- "$TABS" | jq -r 'group_by(.browser)[] | [.[0].browser] + map(.url) | @json' | while read -r group; do
+  browser=$(print -r -- "$group" | jq -r '.[0]')
+  urls=("${(@f)$(print -r -- "$group" | jq -r '.[1:][]')}")
   if [[ -n "$browser" ]] && open -Ra "$browser" 2>/dev/null; then
     open -a "$browser" "${urls[@]}"
   else

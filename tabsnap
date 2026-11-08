@@ -1,33 +1,93 @@
 #!/bin/zsh
 # tabsnap — save every open browser tab to a timestamped markdown file.
 # Usage: tabsnap [--close] [--triage] [note]   e.g. tabsnap --close "before closing research tabs"
-#   --close   close the saved tabs after the snapshot is written
+#   --close   close the saved tabs after the snapshot is written (skips the keep list)
 #   --triage  have Claude group and annotate the snapshot (see tabsnap-triage)
+#        tabsnap setup   grant browser access, write a config file, link the menu bar plugin
 #        tabsnap triage [snapshot.md]   triage an existing snapshot (default: latest)
 #        tabsnap restore [--all] [--dry-run] [file.md]   reopen unticked tabs (default: latest)
 #        tabsnap count   print how many tabs are open (never launches a browser)
-# Output dir: $TABSNAP_DIR (default ~/tab-snapshots)
+#        tabsnap config  show the config file path and current settings
+# Incognito windows are never saved, counted or closed.
 
 set -e
 HERE="${0:A:h}"
 VERSION=0.2.0
 case "$1" in
-  -h|--help) sed -n '2,10s/^# \{0,1\}//p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,11s/^# \{0,1\}//p' "$0"; exit 0 ;;
   -v|--version) echo "tabsnap $VERSION"; exit 0 ;;
 esac
-case "$1" in
-  triage|restore) cmd="$1"; shift; exec "$HERE/tabsnap-$cmd" "$@" ;;
-  count)
-    osascript -l JavaScript <<'JXA'
-let n = 0;
-for (const name of ["Brave Browser", "Google Chrome", "Arc", "Microsoft Edge", "Safari"]) {
-  try {
-    const app = Application(name);
-    if (app.running()) for (const w of app.windows()) n += w.tabs.length;
-  } catch (e) {}
+
+# Config file: "key = value" lines, later lines win. Environment variables win over the file.
+CONFIG="${TABSNAP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/tabsnap/config}"
+typeset -A cfg
+if [[ -f "$CONFIG" ]]; then
+  while IFS='=' read -r key value || [[ -n "$key" ]]; do
+    key="${key//[[:space:]]/}"
+    [[ -z "$key" || "$key" == \#* ]] && continue
+    value="${value#"${value%%[![:space:]]*}"}"
+    value="${value%"${value##*[![:space:]]}"}"
+    case "$key" in
+      dir|warn|keep|model) cfg[$key]="$value" ;;
+      *) echo "tabsnap: ignoring unknown key '$key' in $CONFIG" >&2 ;;
+    esac
+  done < "$CONFIG"
+fi
+export TABSNAP_CONFIG="$CONFIG"
+export TABSNAP_DIR="${TABSNAP_DIR:-${${cfg[dir]:-$HOME/tab-snapshots}/#\~/$HOME}}"
+export TABSNAP_WARN="${TABSNAP_WARN:-${cfg[warn]:-30}}"
+export TABSNAP_KEEP="${TABSNAP_KEEP-${cfg[keep]}}"
+export TABSNAP_MODEL="${TABSNAP_MODEL:-${cfg[model]:-claude-opus-5-5}}"
+
+# Shared by every JXA snippet below: browser list, incognito check, permission errors.
+JXA_COMMON='
+const BROWSERS = [
+  ["Brave Browser", "chromium"], ["Google Chrome", "chromium"], ["Arc", "chromium"],
+  ["Microsoft Edge", "chromium"], ["Safari", "safari"],
+];
+// Chromium windows report mode "incognito"; Safari has no way to tell private windows apart.
+const isIncognito = w => { try { return w.mode() === "incognito"; } catch (e) { return false; } };
+// -1743: user said no to automation; -1744: macOS could not ask
+const isDenied = e => e.errorNumber === -1743 || e.errorNumber === -1744;
+const runningApp = name => { try { const a = Application(name); return a.running() ? a : null; } catch (e) { return null; } };
+'
+
+denied_help() {  # $1 = JSON array of browser names
+  local names=$(echo "$1" | jq -r 'join(", ")')
+  cat >&2 <<EOF
+tabsnap isn't allowed to read tabs from: $names
+Fix: System Settings → Privacy & Security → Automation → enable $names
+     under the app you ran tabsnap from (Terminal, iTerm, SwiftBar, …).
+     Or run: open "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+EOF
 }
-n;
+
+case "$1" in
+  triage|restore|setup) cmd="$1"; shift; exec "$HERE/tabsnap-$cmd" "$@" ;;
+  config)
+    echo "config file: $CONFIG$([[ -f "$CONFIG" ]] || echo " (not created; run tabsnap setup)")"
+    echo "dir   = $TABSNAP_DIR"
+    echo "warn  = $TABSNAP_WARN"
+    echo "keep  = $TABSNAP_KEEP"
+    echo "model = $TABSNAP_MODEL"
+    exit 0 ;;
+  count)
+    RES=$(osascript -l JavaScript <<JXA
+$JXA_COMMON
+let n = 0, denied = [];
+for (const [name] of BROWSERS) {
+  const app = runningApp(name);
+  if (!app) continue;
+  try {
+    for (const w of app.windows()) if (!isIncognito(w)) n += w.tabs.length;
+  } catch (e) { if (isDenied(e)) denied.push(name); }
+}
+JSON.stringify({n, denied});
 JXA
+)
+    print -r -- "$RES" | jq -r .n
+    DENIED=$(print -r -- "$RES" | jq -c .denied)
+    [[ "$DENIED" == "[]" ]] || { denied_help "$DENIED"; exit 3; }
     exit 0 ;;
 esac
 
@@ -42,70 +102,85 @@ for arg in "$@"; do
   esac
 done
 
-OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+OUT_DIR="$TABSNAP_DIR"
 mkdir -p "$OUT_DIR"
 STAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 HUMAN=$(date +"%Y-%m-%d %H:%M:%S %Z")
 FILE="$OUT_DIR/tabs_$STAMP.md"
 
-# Line 1: TOTAL:n, line 2: URLS:<json {browser: [urls]}>, rest: markdown body
-RAW=$(osascript -l JavaScript <<'JXA'
-const browsers = [
-  ["Brave Browser", "chromium"], ["Google Chrome", "chromium"], ["Arc", "chromium"],
-  ["Microsoft Edge", "chromium"], ["Safari", "safari"],
-];
-const esc = s => (s || "(untitled)").replace(/([\[\]])/g, "\\$1").replace(/\s+/g, " ").trim();
-let out = [], total = 0, urls = {};
-for (const [name, kind] of browsers) {
-  let app;
-  try { app = Application(name); if (!app.running()) continue; } catch (e) { continue; }
-  const wins = app.windows();
+RAW=$(osascript -l JavaScript <<JXA
+$JXA_COMMON
+const esc = s => (s || "(untitled)").replace(/([\[\]])/g, "\\\\\$1").replace(/\s+/g, " ").trim();
+let out = [], total = 0, urls = {}, denied = [], skipped = 0;
+for (const [name, kind] of BROWSERS) {
+  const app = runningApp(name);
+  if (!app) continue;
+  let wins;
+  try { wins = app.windows(); wins.length; } catch (e) { if (isDenied(e)) denied.push(name); continue; }
   let section = [], count = 0;
   wins.forEach((w, i) => {
     let tabs;
-    try { tabs = w.tabs(); } catch (e) { return; }
+    try { tabs = w.tabs(); } catch (e) { if (isDenied(e) && !denied.includes(name)) denied.push(name); return; }
     if (!tabs.length) return;
-    section.push(`### Window ${i + 1} (${tabs.length} tabs)\n`);
+    if (isIncognito(w)) { skipped += tabs.length; return; }
+    section.push(\`### Window \${i + 1} (\${tabs.length} tabs)\n\`);
     for (const t of tabs) {
       const title = kind === "safari" ? t.name() : t.title();
       const url = t.url();
       if (!url) continue;
-      section.push(`- [ ] [${esc(title)}](${url})`);
+      section.push(\`- [ ] [\${esc(title)}](\${url})\`);
       (urls[name] = urls[name] || []).push(url);
       count++;
     }
     section.push("");
   });
-  if (count) { out.push(`## ${name} — ${count} tabs\n`, ...section); total += count; }
+  if (count) { out.push(\`## \${name} — \${count} tabs\n\`, ...section); total += count; }
 }
-`TOTAL:${total}\nURLS:${JSON.stringify(urls)}\n` + out.join("\n");
+JSON.stringify({total, urls, denied, skipped, body: out.join("\n")});
 JXA
 )
 
-TOTAL=$(echo "$RAW" | sed -n '1s/^TOTAL://p')
-URLS=$(echo "$RAW" | sed -n '2s/^URLS://p')
+TOTAL=$(print -r -- "$RAW" | jq .total)
+DENIED=$(print -r -- "$RAW" | jq -c .denied)
+SKIPPED=$(print -r -- "$RAW" | jq .skipped)
+if [[ "$DENIED" != "[]" ]]; then
+  denied_help "$DENIED"
+  (( TOTAL > 0 )) || exit 3
+fi
+
 {
   echo "# Tab snapshot — $HUMAN"
   echo
   [[ -n "$NOTE" ]] && echo "> $NOTE" && echo
   echo "**Total tabs:** $TOTAL"
   echo
-  echo "$RAW" | tail -n +3
+  print -r -- "$RAW" | jq -r .body
 } > "$FILE"
 
 echo "Saved $TOTAL tabs → $FILE"
+(( SKIPPED > 0 )) && echo "Skipped $SKIPPED incognito tabs (not saved, not closed)"
 
 if (( CLOSE )) && (( TOTAL > 0 )); then
-  # Only close tabs whose URLs were captured, so anything opened since stays put
-  CLOSED=$(osascript -l JavaScript - "$URLS" <<'JXA'
+  # Only close tabs whose URLs were captured, so anything opened since stays put,
+  # and never ones on the keep list (matched by host, including subdomains)
+  TO_CLOSE=$(print -r -- "$RAW" | jq -c --arg keep "$TABSNAP_KEEP" '
+    ($keep | split(",") | map(gsub("^\\s+|\\s+$"; "") | ascii_downcase) | map(select(. != ""))) as $keep
+    | def host: (capture("^[A-Za-z][A-Za-z0-9+.-]*://(?<h>[^/?#]+)")?.h // "")
+                | sub("^[^@]*@"; "") | sub(":[0-9]+$"; "") | ascii_downcase;
+      def kept: host as $h | any($keep[]; . as $k | $h == $k or ($h | endswith("." + $k)));
+      .urls | map_values(map(select(kept | not)))')
+  KEPT=$(( TOTAL - $(print -r -- "$TO_CLOSE" | jq '[.[][]] | length') ))
+  CLOSED=$(osascript -l JavaScript - "$TO_CLOSE" <<JXA
+$JXA_COMMON
 function run(argv) {
   const saved = JSON.parse(argv[0]);
   let closed = 0;
   for (const name in saved) {
     const want = new Set(saved[name]);
-    const app = Application(name);
-    if (!app.running()) continue;
+    const app = runningApp(name);
+    if (!app) continue;
     for (const w of app.windows()) {
+      if (isIncognito(w)) continue;
       const tabs = w.tabs();
       for (let i = tabs.length - 1; i >= 0; i--) {
         try {
@@ -118,7 +193,7 @@ function run(argv) {
 }
 JXA
 )
-  echo "Closed $CLOSED tabs"
+  echo "Closed $CLOSED tabs$( (( KEPT > 0 )) && echo " (kept $KEPT on your keep list)")"
 fi
 
 # Triage last, so a failed API call never blocks saving or closing

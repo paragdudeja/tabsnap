@@ -9,7 +9,6 @@
 # <swiftbar.hideRunInTerminal>true</swiftbar.hideRunInTerminal>
 # <swiftbar.hideLastUpdated>true</swiftbar.hideLastUpdated>
 # <swiftbar.refreshOnOpen>true</swiftbar.refreshOnOpen>
-# <swiftbar.environment>[TABSNAP_WARN=30]</swiftbar.environment>
 #
 # SwiftBar runs this every minute to draw the menu, and again with an action
 # argument (snapshot, close, ...) when a menu item is clicked.
@@ -19,6 +18,12 @@ export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
 TABSNAP="${TABSNAP_BIN:-$(command -v tabsnap)}"
 OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
 WARN="${TABSNAP_WARN:-30}"
+# Pick up the user's config file (dir, warn) the same way the CLI does
+if [[ -n "$TABSNAP" ]]; then
+  while read -r k _ v; do
+    case "$k" in dir) OUT_DIR="$v" ;; warn) WARN="$v" ;; esac
+  done < <("$TABSNAP" config 2>/dev/null | tail -n +2)
+fi
 SELF="${SWIFTBAR_PLUGIN_PATH:-$0}"
 
 notify() { osascript -e "display notification \"${1//\"/\\\"}\" with title \"tabsnap\"" 2>/dev/null; }
@@ -58,6 +63,15 @@ if [[ -z "$TABSNAP" ]]; then
 fi
 
 count=$("$TABSNAP" count 2>/dev/null)
+if (( $? == 3 )); then
+  echo "! | sfimage=exclamationmark.triangle color=#E8590C sfcolor=#E8590C tooltip=\"tabsnap can't read your tabs\""
+  echo "---"
+  echo "tabsnap needs permission to read your browser tabs"
+  echo "Open Automation settings… | href=x-apple.systempreferences:com.apple.preference.security?Privacy_Automation sfimage=gear"
+  echo "Enable your browsers under SwiftBar, then refresh | size=11"
+  echo "Refresh | refresh=true sfimage=arrow.clockwise"
+  exit 0
+fi
 [[ "$count" == <-> ]] || count="?"
 if [[ "$count" != "?" ]] && (( count >= WARN )); then
   echo "$count | sfimage=square.stack.3d.up.fill color=#E8590C sfcolor=#E8590C tooltip=\"$count tabs open — time to snapshot\""

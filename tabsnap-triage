@@ -1,7 +1,8 @@
 #!/bin/zsh
 # tabsnap-triage — use Claude to group, annotate and triage a tab snapshot.
 # Usage: tabsnap-triage [snapshot.md]   (default: latest snapshot in $TABSNAP_DIR)
-# Writes <snapshot>.triage.md next to the snapshot.
+# Writes <snapshot>.triage.md next to the snapshot. Sends tab titles and URLs with
+# query strings removed; set TABSNAP_TRIAGE_FULL_URLS=1 to send full URLs.
 # Calls the Claude API when ANTHROPIC_API_KEY is set, otherwise the Claude Code CLI
 # (`claude`), which uses your existing Claude login.
 
@@ -34,7 +35,7 @@ TABS=$(jq -Rn '
    | capture("^- \\[[ xX]\\] \\[(?<title>.*)\\]\\((?<url>[^ ]+)\\)$")?
    | .title |= gsub("\\\\(?<c>[\\[\\]])"; .c)]
   | to_entries | map({id: (.key + 1), title: .value.title, url: .value.url})' < "$SNAP")
-COUNT=$(echo "$TABS" | jq length)
+COUNT=$(print -r -- "$TABS" | jq length)
 (( COUNT > 0 )) || { echo "No tabs found in $SNAP" >&2; exit 1; }
 echo "Triaging $COUNT tabs from $(basename "$SNAP") with $MODEL via $BACKEND…" >&2
 
@@ -49,7 +50,11 @@ Group the tabs into a handful of themes (e.g. a topic they're studying, a work p
 The ids are only for your answer; never mention them in notes, since the reader won't see them (name the other tab instead). Also list ids of tabs that point to the same page. Start with a 2-3 sentence overview of what this person was working on.
 
 Tabs (id, title, url):
-$(echo "$TABS" | jq -r '.[] | "\(.id). \(.title) — \(.url)"')"
+$(print -r -- "$TABS" | jq -r --argjson full "${TABSNAP_TRIAGE_FULL_URLS:-0}" '
+  # Query strings and fragments often carry tokens and session ids, so drop them
+  # (and any user:password@) unless the user opts in.
+  def safe: if $full == 1 then . else sub("[?#].*$"; "") | sub("^(?<s>[^:/]+://)[^@/]*@"; "\(.s)") end;
+  .[] | "\(.id). \(.title) — \(.url | safe)"')"
 
 SCHEMA='{
   "type": "object", "additionalProperties": false,

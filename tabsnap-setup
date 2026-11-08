@@ -1,0 +1,93 @@
+#!/bin/zsh
+# tabsnap-setup — first-run setup: browser access, config file, menu bar plugin, triage check.
+# Usage: tabsnap setup    (safe to re-run; it never overwrites your config)
+
+HERE="${0:A:h}"
+CONFIG="${TABSNAP_CONFIG:-${XDG_CONFIG_HOME:-$HOME/.config}/tabsnap/config}"
+OUT_DIR="${TABSNAP_DIR:-$HOME/tab-snapshots}"
+ok()   { echo "  ✓ $1"; }
+warn() { echo "  ! $1"; }
+todo() { echo "  → $1"; }
+
+echo "Browser access"
+# Asking a running browser for its windows makes macOS show the permission prompt once.
+for name in "Brave Browser" "Google Chrome" "Arc" "Microsoft Edge" "Safari"; do
+  open -Ra "$name" 2>/dev/null || continue
+  result=$(osascript -l JavaScript - "$name" <<'JXA' 2>/dev/null
+function run(argv) {
+  const app = Application(argv[0]);
+  if (!app.running()) return "not-running";
+  try { app.windows().length; return "ok"; }
+  catch (e) { return (e.errorNumber === -1743 || e.errorNumber === -1744) ? "denied" : "error"; }
+}
+JXA
+)
+  case "$result" in
+    ok) ok "$name" ;;
+    not-running) todo "$name is installed but not open — open it and re-run tabsnap setup to grant access" ;;
+    denied)
+      warn "$name: access denied"
+      todo "enable it in System Settings → Privacy & Security → Automation, then re-run setup"
+      denied=1 ;;
+    *) warn "$name: couldn't check (${result:-no response})" ;;
+  esac
+done
+[[ -n "$denied" ]] && open "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation"
+
+echo "Config"
+if [[ -f "$CONFIG" ]]; then
+  ok "using $CONFIG"
+else
+  mkdir -p "${CONFIG:h}"
+  cat > "$CONFIG" <<EOF
+# tabsnap config — "key = value". Environment variables (TABSNAP_DIR, …) override these.
+
+# Where snapshots go. Point it at an Obsidian vault folder to keep them with your notes.
+dir = ~/tab-snapshots
+
+# Menu bar count turns orange at this many open tabs.
+warn = 30
+
+# Never close tabs on these sites with --close (comma-separated; subdomains match too).
+keep = mail.google.com, calendar.google.com
+
+# Model used by tabsnap triage.
+model = claude-opus-5-5
+EOF
+  ok "created $CONFIG (edit it to change folder, keep list, …)"
+fi
+mkdir -p "$OUT_DIR" && ok "snapshots go to $OUT_DIR"
+
+echo "Menu bar (optional)"
+plugin=""
+for candidate in "$HERE/swiftbar/tabsnap.1m.sh" "$(brew --prefix 2>/dev/null)/share/tabsnap/swiftbar/tabsnap.1m.sh"; do
+  [[ -f "$candidate" ]] && { plugin="$candidate"; break; }
+done
+plugin_dir=$(defaults read com.ameba.SwiftBar PluginDirectory 2>/dev/null)
+plugin_dir="${plugin_dir/#\~/$HOME}"
+installed=("$plugin_dir"/tabsnap.*.sh(N))
+if ! open -Ra SwiftBar 2>/dev/null; then
+  todo "for a live tab count in the menu bar: brew install --cask swiftbar, open it once, then re-run tabsnap setup"
+elif [[ -z "$plugin_dir" ]]; then
+  todo "open SwiftBar once and choose a plugin folder, then re-run tabsnap setup"
+elif [[ -n "$installed" ]] && grep -q '<xbar.title>tabsnap</xbar.title>' "$installed[1]" 2>/dev/null; then
+  ok "SwiftBar plugin already installed ($installed[1])"
+elif [[ -n "$installed" ]]; then
+  warn "$installed[1] exists and isn't the tabsnap plugin; leaving it alone"
+elif [[ -z "$plugin" ]]; then
+  warn "couldn't find the tabsnap plugin file next to this install"
+else
+  ln -s "$plugin" "$plugin_dir/" && open -g "swiftbar://refreshallplugins" && ok "linked SwiftBar plugin"
+fi
+
+echo "AI triage (optional)"
+if [[ -n "$ANTHROPIC_API_KEY" ]]; then
+  ok "will use your ANTHROPIC_API_KEY"
+elif command -v claude >/dev/null; then
+  ok "will use your Claude Code login (claude CLI)"
+else
+  todo "install Claude Code or set ANTHROPIC_API_KEY to use tabsnap triage"
+fi
+
+echo
+echo "Try it: tabsnap    (or tabsnap --help)"

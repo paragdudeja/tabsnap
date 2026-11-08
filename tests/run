@@ -23,6 +23,17 @@ echo "cli"
 expect "--version" "$("$REPO/tabsnap" --version)" "tabsnap "
 expect "--help lists restore" "$("$REPO/tabsnap" --help)" "tabsnap restore"
 
+echo "config"
+CFG="$WORK/config"
+printf 'dir = ~/first\nkeep = a.com\n  # comment\nkeep =  b.com , c.com  \nwarn=12\nbogus = 1\n' > "$CFG"
+out=$(TABSNAP_CONFIG="$CFG" "$REPO/tabsnap" config 2>&1)
+expect "later lines win" "$out" "keep  = b.com , c.com"
+expect "expands ~" "$out" "dir   = $HOME/first"
+expect "parses warn" "$out" "warn  = 12"
+expect "warns on unknown key" "$out" "ignoring unknown key 'bogus'"
+expect "env beats file" "$(TABSNAP_CONFIG="$CFG" TABSNAP_WARN=99 "$REPO/tabsnap" config 2>/dev/null)" "warn  = 99"
+expect "defaults without file" "$(TABSNAP_CONFIG="$WORK/none" "$REPO/tabsnap" config)" "warn  = 30"
+
 echo "restore"
 SNAP="$WORK/snaps/tabs_2026-01-01_00-00-00.md"
 mkdir -p "$WORK/snaps"
@@ -37,18 +48,19 @@ cat > "$SNAP" <<'EOF'
 - [x] [Already done](https://example.com/b)
 - [ ] [Has \[brackets\]](https://en.wikipedia.org/wiki/Foo_(bar))
 - [X] [Done uppercase](https://example.com/c)
+- [ ] [C:\\temp \n backslashes](https://example.com/e?token=SECRET#frag)
 
 ## Not A Browser — 1 tabs
 
 - [ ] [Unknown section](https://example.com/d)
 EOF
 out=$("$REPO/tabsnap" restore --dry-run "$SNAP" 2>&1)
-expect "counts unticked tabs" "$out" "Would reopen 3 tabs"
+expect "counts unticked tabs" "$out" "Would reopen 4 tabs"
 expect "keeps source browser" "$out" "[Safari] https://example.com/a"
 expect "url with parentheses" "$out" "https://en.wikipedia.org/wiki/Foo_(bar)"
 expect "unknown header → default browser" "$out" "[default] https://example.com/d"
 expect_not "skips ticked tabs" "$out" "example.com/b"
-expect "--all includes ticked" "$("$REPO/tabsnap" restore --all --dry-run "$SNAP")" "Would reopen 5 tabs"
+expect "--all includes ticked" "$("$REPO/tabsnap" restore --all --dry-run "$SNAP")" "Would reopen 6 tabs"
 
 TRIAGE="$WORK/snaps/tabs_2026-01-01_00-00-00.triage.md"
 cat > "$TRIAGE" <<'EOF'
@@ -84,11 +96,17 @@ expect "triage saves file" "$out" "Saved triage"
 md=$(cat "$TRIAGE")
 expect "renders group" "$md" "## Reading (1)"
 expect "renders note and badge" "$md" "— Keep it \`📌 reference\`"
-expect "lists unsorted tabs" "$md" "## Unsorted (4)"
+expect "lists unsorted tabs" "$md" "## Unsorted (5)"
 expect "lists duplicates" "$md" "Open me = Already done"
 req=$(cat "$WORK/request.json")
 expect "request uses fallbacks" "$req" '"fallbacks": "default"'
 expect "request sends tabs" "$req" "1. Open me — https://example.com/a"
+expect "keeps backslashes in titles" "$req" 'C:\\\\temp'
+expect "strips query and fragment" "$req" "backslashes — https://example.com/e\\n"
+expect_not "never sends the token" "$req" "SECRET"
+expect "report keeps full url" "$md" "https://example.com/e?token=SECRET#frag"
+PATH="$WORK/bin:$PATH" ANTHROPIC_API_KEY=test TABSNAP_TRIAGE_FULL_URLS=1 "$REPO/tabsnap" triage "$SNAP" >/dev/null 2>&1
+expect "opt-in sends full url" "$(cat "$WORK/request.json")" "e?token=SECRET#frag"
 
 out=$(PATH="/usr/bin:/bin:${$(command -v jq):h}" env -u ANTHROPIC_API_KEY "$REPO/tabsnap" triage "$SNAP" 2>&1)
 expect "no key and no claude → clear error" "$out" "needs either ANTHROPIC_API_KEY or the Claude Code CLI"
