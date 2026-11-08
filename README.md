@@ -19,6 +19,7 @@ tabsnap --close "done for today" # snapshot, then close the saved tabs
 tabsnap --close --triage        # snapshot, close, then AI-triage
 tabsnap triage                  # AI-triage the latest snapshot
 tabsnap restore                 # reopen tabs you haven't ticked off
+tabsnap count                   # how many tabs are open right now
 ```
 
 Snapshots are saved to `~/tab-snapshots/` (override with `TABSNAP_DIR`):
@@ -47,6 +48,18 @@ tabsnap restore --dry-run                 # list what would open
 tabsnap restore --all                     # include ticked tabs too
 tabsnap restore ~/tab-snapshots/tabs_2026-11-08_12-15-26.triage.md
 ```
+
+## Menu bar
+
+A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin shows your open-tab count in the menu bar (orange from 30 tabs) and puts every command one click away: snapshot, snapshot + close, triage, restore, and open the latest files.
+
+```sh
+brew install --cask swiftbar
+# open SwiftBar once and pick a plugin folder, then:
+ln -s "$(brew --prefix)/share/tabsnap/swiftbar/tabsnap.1m.sh" "$(defaults read com.ameba.SwiftBar PluginDirectory)/"
+```
+
+Change the warning threshold with `TABSNAP_WARN` in the plugin's SwiftBar settings. `tabsnap count` prints the same number from the terminal.
 
 ## AI triage
 
