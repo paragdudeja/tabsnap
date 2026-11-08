@@ -4,6 +4,8 @@ All notable changes to tabsnap. New work goes under **Unreleased**; `./release` 
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-11-08
+
 ### Fixed
 - `--close` closes tabs one by one again and never closes a whole window by script. In 0.2.3, closing a window that still had several tabs could leave Brave with a half-closed window and crash it. If you're on 0.2.3, please upgrade.
 
