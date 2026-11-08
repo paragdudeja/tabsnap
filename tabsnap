@@ -246,17 +246,13 @@ function run(argv) {
       let w;
       try { w = app.windows.byId(Number(id)); w.id(); } catch (e) { continue; }  // window gone
       if (isIncognito(w)) continue;
+      // Close tab by tab, never the window itself: asking Brave to close a window that
+      // still has several tabs can leave it half-closed, and touching it again crashes Brave.
       const tabs = w.tabs();
-      const doomed = tabs.map(t => { try { return want.has(t.url()); } catch (e) { return false; } });
-      if (doomed.every(Boolean)) {
-        // Emptying the window: closing its last tab by script crashed Brave once, so
-        // close all but one tab, then close the window itself.
-        for (let i = tabs.length - 1; i >= 1; i--) { try { tabs[i].close(); closed++; } catch (e) {} }
-        try { w.close(); closed++; } catch (e) {}
-        continue;
-      }
       for (let i = tabs.length - 1; i >= 0; i--) {
-        if (doomed[i]) { try { tabs[i].close(); closed++; } catch (e) {} }
+        try {
+          if (want.has(tabs[i].url())) { tabs[i].close(); closed++; }
+        } catch (e) {}
       }
     }
   }

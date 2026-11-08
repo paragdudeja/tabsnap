@@ -23,9 +23,8 @@ test_tabs() { jxa "b.windows().filter(w => w.givenName() === '$NAME').map(w => w
 
 cleanup() {
   # Close only what we created: our named window and our incognito window
-  # Same as tabsnap --close: all tabs but one, then the window (avoids Brave's
-  # "close N tabs?" prompt and never closes a window's last tab directly)
-  jxa "b.windows().filter(w => w.givenName() === '$NAME' || w.id() == '${INCOG_ID:-0}').forEach(w => { const t = w.tabs(); for (let i = t.length - 1; i >= 1; i--) t[i].close(); w.close(); })" >/dev/null 2>&1
+  # Same as tabsnap --close: tab by tab, never window.close() (that crashed Brave twice)
+  jxa "b.windows().filter(w => w.givenName() === '$NAME' || w.id() == '${INCOG_ID:-0}').forEach(w => { const t = w.tabs(); for (let i = t.length - 1; i >= 0; i--) t[i].close(); })" >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap cleanup EXIT
@@ -78,10 +77,10 @@ left=$(test_tabs)
 
 echo "restore"
 out=$("$TS" restore --dry-run "$snap")
-expect "dry run lists all saved tabs" "$out" "Would reopen 4 tabs"
+expect "dry run lists unique saved tabs" "$out" "Would reopen 3 tabs from ${snap:t} (skipped 1 duplicate"
 expect "restores to Brave" "$out" "[Brave Browser] https://example.com/live-1"
 sed -i '' 's|^- \[ \] \(.*live-2\)|- [x] \1|' "$snap"
-expect "ticked tab is skipped" "$("$TS" restore --dry-run "$snap")" "Would reopen 3 tabs"
+expect "ticked tab is skipped" "$("$TS" restore --dry-run "$snap")" "Would reopen 2 tabs"
 jxa "b.windows().find(w => w.givenName() === '$NAME').index = 1; 'ok'" >/dev/null; sleep 1
 out=$("$TS" restore "$snap" 2>&1); sleep 3
 expect "restore reports count" "$out" "Reopened 2 tabs"
