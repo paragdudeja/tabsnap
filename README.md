@@ -42,7 +42,7 @@ Snapshots are saved to `~/tab-snapshots/` by default:
 - [ ] [Bus Routes - LeetCode](https://leetcode.com/problems/bus-routes/)
 ```
 
-`--close` only closes tabs whose URLs were saved, only after the file is written, and never tabs on your [keep list](#config).
+`--close` only closes tabs whose URLs were saved, only after the file is written, and never tabs on your [keep list](#config). Pinned tabs aren't detected; put their sites on the keep list.
 
 ## Just one browser or window
 
@@ -86,6 +86,8 @@ warn  = 30                                     # menu bar turns orange from here
 keep  = mail.google.com, calendar.google.com   # --close never closes these (subdomains too)
 model = claude-opus-5-5                        # model for triage
 ```
+
+**Pinned tabs:** browsers don't tell other apps which tabs are pinned, so tabsnap can't skip them automatically. Add their sites to `keep` instead (e.g. `keep = mail.google.com, calendar.google.com, app.slack.com`) and `--close` will leave them alone.
 
 Environment variables `TABSNAP_DIR`, `TABSNAP_WARN`, `TABSNAP_KEEP` and `TABSNAP_MODEL` override the file. `tabsnap config` shows what's in effect.
 
