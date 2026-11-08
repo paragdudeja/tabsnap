@@ -9,6 +9,9 @@ Notes for coding agents (and humans) changing this repo. For *using* tabsnap fro
 - `swiftbar/tabsnap.1m.sh`: SwiftBar menu bar plugin; it calls the CLI. SwiftBar reads the refresh interval from the *link's* file name, so `setup` links it as `tabsnap.<refresh>.sh` and the plugin renames its own link when the `refresh` setting changes (only when `$SWIFTBAR` is set).
 - `skills/tabsnap/SKILL.md` + `.claude-plugin/`: the agent skill, also a Claude Code plugin marketplace. Check with `claude plugin validate .`.
 - `tests/run`: offline tests, safe anywhere. `tests/live`: drives a real Brave Browser (see below).
+- `extension/`: the browser extension (Manifest V3, plain JS modules, no build step). `lib.js` holds the logic with no `chrome.*` calls; `background.js` is the service worker (badge, shortcuts, save/close). Keep this folder loadable as-is: no `node_modules`, tests or files starting with `_` (Chrome refuses those in unpacked extensions).
+- `tests/extension/`: `lib.test.mjs` (unit + CLI interop) and `e2e.test.mjs`, which loads the extension into Chrome for Testing with a throwaway profile. Run with `cd tests/extension && npm install && npm test`. Don't use CDP `Browser.setDownloadBehavior` there: it makes Chrome ignore the extension's download file names.
+- `FORMAT.md`: the snapshot markdown both tools read and write. Change it only with both sides and the interop tests updated.
 - Browser access is JXA (`osascript -l JavaScript`). Shared helpers live in `JXA_COMMON` in `tabsnap`; scripts are passed in quoted heredocs (`<<'JXA'`) so the shell never touches them.
 
 ## Shell and jq traps (all of these bit us)
@@ -35,6 +38,10 @@ tests/live       # real Brave; ask first
 ```
 
 Add a test to `tests/run` for every bug fix. Agent behaviour can be checked without touching the user's Claude config: `claude -p "…" --plugin-dir . --allowedTools "Bash(tabsnap:*)"`.
+
+## Releasing the extension
+
+Bump `version` in `extension/manifest.json`, zip the folder's contents, and publish a GitHub pre-release tagged `extension-vX.Y.Z` with `--prerelease --latest=false`, so the CLI release stays "Latest". (Store listings come later.)
 
 ## Releasing
 

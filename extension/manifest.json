@@ -1,0 +1,26 @@
+{
+  "manifest_version": 3,
+  "name": "tabsnap",
+  "version": "0.1.0",
+  "description": "Save your open tabs to a checklist, close them without losing anything, and find or reopen them later.",
+  "homepage_url": "https://github.com/paragdudeja/tabsnap",
+  "permissions": ["tabs", "storage", "unlimitedStorage", "downloads"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": {
+    "default_title": "tabsnap",
+    "default_popup": "popup.html",
+    "default_icon": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" }
+  },
+  "icons": { "16": "icons/16.png", "32": "icons/32.png", "48": "icons/48.png", "128": "icons/128.png" },
+  "options_page": "options.html",
+  "commands": {
+    "save-all": {
+      "suggested_key": { "default": "Alt+Shift+S" },
+      "description": "Save all open tabs"
+    },
+    "save-close-window": {
+      "suggested_key": { "default": "Alt+Shift+W" },
+      "description": "Save this window, then close its tabs"
+    }
+  }
+}

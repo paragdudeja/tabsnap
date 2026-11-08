@@ -1,0 +1,12 @@
+{
+  "name": "tabsnap-extension-tests",
+  "private": true,
+  "type": "module",
+  "description": "Tests for the tabsnap browser extension. Not part of the extension itself.",
+  "scripts": {
+    "test": "node --test lib.test.mjs e2e.test.mjs"
+  },
+  "devDependencies": {
+    "puppeteer": "25.16.0"
+  }
+}

@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tabsnap settings</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="page">
+  <main>
+    <header><h1>tabsnap settings</h1><a href="snapshot.html">All snapshots</a></header>
+
+    <label class="field"><span>Keep list</span>
+      <input id="keep" type="text" placeholder="mail.google.com, calendar.google.com">
+      <small>"Save &amp; close" never closes tabs on these sites (comma-separated; subdomains match too).</small>
+    </label>
+
+    <label class="field"><span><input id="closePinned" type="checkbox"> Close pinned tabs too</span>
+      <small>Off by default: pinned tabs stay open when you save &amp; close.</small>
+    </label>
+
+    <label class="field"><span>Warn at</span>
+      <input id="warn" type="number" min="1" max="999" style="width:100px">
+      <small>The toolbar count turns orange from this many open tabs.</small>
+    </label>
+
+    <label class="field"><span><input id="saveMarkdown" type="checkbox"> Also save a markdown file</span>
+      <small>Each snapshot is downloaded to <code>Downloads/<span id="folder-name">tabsnap</span>/</code> as a checklist you own. On a Mac, point the tabsnap CLI there (<code>dir</code> in its config) to search and triage these too.</small>
+    </label>
+
+    <label class="field"><span>Folder inside Downloads</span>
+      <input id="folder" type="text" style="width:220px">
+    </label>
+
+    <label class="field"><span>Keyboard shortcuts</span>
+      <small><b>Alt+Shift+S</b> saves all tabs; <b>Alt+Shift+W</b> saves and closes the current window. Change them at <code>chrome://extensions/shortcuts</code>.</small>
+    </label>
+
+    <div class="status" id="status" role="status"></div>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

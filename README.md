@@ -2,7 +2,7 @@
 
 Too many tabs open? `tabsnap` saves every open browser tab to a timestamped markdown checklist, so you can close them without losing anything. Optionally, Claude groups the tabs by theme, notes what each one is, and tells you which to read later, keep, or drop.
 
-Works with Brave, Chrome, Arc, Edge and Safari on macOS.
+Works with Brave, Chrome, Arc, Edge and Safari on macOS. Not on a Mac? Try the [browser extension](#browser-extension-beta) (Windows, Linux, ChromeOS, macOS).
 
 ## Install
 
@@ -138,6 +138,24 @@ tabsnap ships a skill that teaches Claude Code (and other agents that read skill
 ```
 
 The skill tells the agent to close tabs only when you ask, to show what `restore` will open before opening it, and to keep your snapshots private. Other agents can read `skills/tabsnap/SKILL.md` directly.
+
+## Browser extension (beta)
+
+The same idea inside Chrome, Edge, Brave, Arc or Opera, on any OS:
+
+- a tab count on the toolbar icon (orange past your limit),
+- **Save all**, **Save this window**, and **Save & close** (pinned tabs and your keep list stay open),
+- search past snapshots and reopen tabs, tick tabs off, reopen what's left,
+- shortcuts: **Alt+Shift+S** saves everything, **Alt+Shift+W** saves and closes the current window,
+- a markdown copy of each snapshot in `Downloads/tabsnap/`, in the [same format](FORMAT.md) as the CLI. On a Mac, set the CLI's `dir` to that folder to search, triage and use the agent skill on them too.
+
+It isn't in the browser stores yet. To try it:
+
+1. Download `tabsnap-extension-*.zip` from the [latest extension release](https://github.com/paragdudeja/tabsnap/releases?q=extension&expanded=true) and unzip it somewhere you'll keep (the browser loads it from that folder).
+2. Open `chrome://extensions` (or `edge://extensions`, `brave://extensions`) and turn on **Developer mode**.
+3. Click **Load unpacked** and pick the unzipped folder. Pin the tabsnap icon to your toolbar.
+
+Snapshots stay in your browser and your Downloads folder; the extension sends nothing anywhere. It needs the "tabs" permission to read tab titles and URLs, which browsers describe as reading your browsing history.
 
 ## Privacy
 

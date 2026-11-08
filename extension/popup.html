@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>tabsnap</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body class="popup">
+  <header>
+    <h1>tabsnap</h1>
+    <span><span id="count" class="count">–</span> <span class="muted">tabs open</span></span>
+  </header>
+
+  <input id="note" type="text" placeholder="Note (optional), e.g. interview prep" maxlength="200">
+  <div class="grid" style="margin-top:8px">
+    <button id="save-all" class="primary">Save all</button>
+    <button id="save-window">Save this window</button>
+    <button id="close-window">Save &amp; close window</button>
+    <button id="close-all">Save &amp; close all</button>
+  </div>
+  <div id="status" class="status" role="status"></div>
+
+  <h2>Find a tab</h2>
+  <input id="search" type="search" placeholder="Search past snapshots…">
+  <ul id="results" class="list"></ul>
+  <div id="results-actions" class="row" hidden style="margin-top:6px">
+    <button id="reopen-results">Reopen these</button>
+  </div>
+
+  <h2>Recent snapshots</h2>
+  <ul id="recent" class="list"></ul>
+
+  <footer>
+    <a href="snapshot.html" target="_blank">All snapshots</a>
+    <a href="options.html" target="_blank">Settings</a>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>
