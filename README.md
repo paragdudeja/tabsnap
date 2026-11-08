@@ -20,6 +20,7 @@ tabsnap                         # snapshot all open tabs
 tabsnap "leetcode backlog"      # snapshot with a note
 tabsnap --close "done for today" # snapshot, then close the saved tabs
 tabsnap --close --triage        # snapshot, close, then AI-triage
+tabsnap --close --window front  # save and close just the window you're in
 tabsnap triage                  # AI-triage the latest snapshot
 tabsnap restore                 # reopen tabs you haven't ticked off
 tabsnap count                   # how many tabs are open right now
@@ -43,6 +44,16 @@ Snapshots are saved to `~/tab-snapshots/` by default:
 
 `--close` only closes tabs whose URLs were saved, only after the file is written, and never tabs on your [keep list](#config).
 
+## Just one browser or window
+
+```sh
+tabsnap --browser brave                     # only Brave (also: chrome, arc, edge, safari)
+tabsnap --close --window front              # the front window of the browser you were using
+tabsnap --close --window "Interview prep"   # a window you named
+```
+
+`--window front` picks the browser you were last using; if several are open and none is in front (e.g. you're in Terminal), add `--browser`. To name a window in Chrome, Brave or Edge, right-click the tab strip → **Name window…**. Names make good targets for project windows you want to park and come back to. With a target, `--close` only touches that window.
+
 ## Restore
 
 `tabsnap restore` reopens every unticked (`- [ ]`) tab from the latest snapshot, in the browser it was saved from. Tick off tabs as you deal with them and restore brings back only what's left. It also works on a triage file.
@@ -55,7 +66,7 @@ tabsnap restore ~/tab-snapshots/tabs_2026-11-08_12-15-26.triage.md
 
 ## Menu bar
 
-A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin shows your open-tab count in the menu bar (orange once you pass your `warn` limit) and puts every command one click away: snapshot, snapshot + close, triage, restore, and open the latest files.
+A [SwiftBar](https://github.com/swiftbar/SwiftBar) plugin shows your open-tab count in the menu bar (orange once you pass your `warn` limit) and puts every command one click away: snapshot, snapshot + close (everything or just the front window), triage, restore, and open the latest files.
 
 ```sh
 brew install --cask swiftbar   # open SwiftBar once and pick a plugin folder

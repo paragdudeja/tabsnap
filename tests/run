@@ -34,6 +34,14 @@ expect "warns on unknown key" "$out" "ignoring unknown key 'bogus'"
 expect "env beats file" "$(TABSNAP_CONFIG="$CFG" TABSNAP_WARN=99 "$REPO/tabsnap" config 2>/dev/null)" "warn  = 99"
 expect "defaults without file" "$(TABSNAP_CONFIG="$WORK/none" "$REPO/tabsnap" config)" "warn  = 30"
 
+echo "targeting"
+# These all fail during argument parsing, before any browser is touched
+out=$("$REPO/tabsnap" --browser firefox 2>&1); expect "rejects unknown browser" "$out" "should be one of: brave, chrome"
+out=$("$REPO/tabsnap" --browser e 2>&1); expect "rejects ambiguous browser" "$out" "should be one of"
+out=$("$REPO/tabsnap" --window 2>&1); expect "--window needs a value" "$out" "--window needs a value"
+out=$("$REPO/tabsnap" --clsoe 2>&1); expect "rejects typo'd flags" "$out" "unknown option --clsoe"
+expect "--help documents --window" "$("$REPO/tabsnap" --help)" "--window   only the front window"
+
 echo "restore"
 SNAP="$WORK/snaps/tabs_2026-01-01_00-00-00.md"
 mkdir -p "$WORK/snaps"

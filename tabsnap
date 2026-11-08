@@ -1,8 +1,11 @@
 #!/bin/zsh
 # tabsnap — save every open browser tab to a timestamped markdown file.
-# Usage: tabsnap [--close] [--triage] [note]   e.g. tabsnap --close "before closing research tabs"
-#   --close   close the saved tabs after the snapshot is written (skips the keep list)
-#   --triage  have Claude group and annotate the snapshot (see tabsnap-triage)
+# Usage: tabsnap [--close] [--triage] [--browser NAME] [--window front|NAME] [note]
+#   --close    close the saved tabs after the snapshot is written (skips the keep list)
+#   --triage   have Claude group and annotate the snapshot (see tabsnap-triage)
+#   --browser  only this browser: brave, chrome, arc, edge or safari
+#   --window   only the front window, or a window you named in Chrome/Brave/Edge
+#   e.g. tabsnap --close --window front "done with this research"
 #        tabsnap setup   grant browser access, write a config file, link the menu bar plugin
 #        tabsnap triage [snapshot.md]   triage an existing snapshot (default: latest)
 #        tabsnap restore [--all] [--dry-run] [file.md]   reopen unticked tabs (default: latest)
@@ -14,7 +17,7 @@ set -e
 HERE="${0:A:h}"
 VERSION=0.2.1
 case "$1" in
-  -h|--help) sed -n '2,11s/^# \{0,1\}//p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,14s/^# \{0,1\}//p' "$0"; exit 0 ;;
   -v|--version) echo "tabsnap $VERSION"; exit 0 ;;
 esac
 
@@ -94,51 +97,107 @@ esac
 CLOSE=0
 TRIAGE=0
 NOTE=""
-for arg in "$@"; do
-  case "$arg" in
+BROWSER_ARG=""
+WINDOW_ARG=""
+while (( $# )); do
+  case "$1" in
     --close) CLOSE=1 ;;
     --triage) TRIAGE=1 ;;
-    *) NOTE="${NOTE:+$NOTE }$arg" ;;
+    --browser|--window)
+      [[ -n "$2" ]] || { echo "tabsnap: $1 needs a value" >&2; exit 2; }
+      [[ "$1" == --browser ]] && BROWSER_ARG="$2" || WINDOW_ARG="$2"
+      shift ;;
+    --browser=*) BROWSER_ARG="${1#*=}" ;;
+    --window=*) WINDOW_ARG="${1#*=}" ;;
+    -*) echo "tabsnap: unknown option $1 (see tabsnap --help)" >&2; exit 2 ;;
+    *) NOTE="${NOTE:+$NOTE }$1" ;;
   esac
+  shift
 done
+
+if [[ -n "$BROWSER_ARG" ]]; then
+  matches=()
+  for b in "Brave Browser" "Google Chrome" "Arc" "Microsoft Edge" "Safari"; do
+    [[ "${(L)b}" == *"${(L)BROWSER_ARG}"* ]] && matches+=("$b")
+  done
+  (( ${#matches} == 1 )) || { echo "tabsnap: --browser '$BROWSER_ARG' should be one of: brave, chrome, arc, edge, safari" >&2; exit 2; }
+  BROWSER_ARG="$matches[1]"
+fi
 
 OUT_DIR="$TABSNAP_DIR"
 mkdir -p "$OUT_DIR"
 STAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 HUMAN=$(date +"%Y-%m-%d %H:%M:%S %Z")
 FILE="$OUT_DIR/tabs_$STAMP.md"
+n=2; while [[ -e "$FILE" ]]; do FILE="$OUT_DIR/tabs_${STAMP}_$((n++)).md"; done  # two snapshots in one second
 
-RAW=$(osascript -l JavaScript <<JXA
-$JXA_COMMON
-const esc = s => (s || "(untitled)").replace(/([\[\]])/g, "\\\\\$1").replace(/\s+/g, " ").trim();
-let out = [], total = 0, urls = {}, denied = [], skipped = 0;
-for (const [name, kind] of BROWSERS) {
-  const app = runningApp(name);
-  if (!app) continue;
-  let wins;
-  try { wins = app.windows(); wins.length; } catch (e) { if (isDenied(e)) denied.push(name); continue; }
-  let section = [], count = 0;
-  wins.forEach((w, i) => {
-    let tabs;
-    try { tabs = w.tabs(); } catch (e) { if (isDenied(e) && !denied.includes(name)) denied.push(name); return; }
-    if (!tabs.length) return;
-    if (isIncognito(w)) { skipped += tabs.length; return; }
-    section.push(\`### Window \${i + 1} (\${tabs.length} tabs)\n\`);
-    for (const t of tabs) {
-      const title = kind === "safari" ? t.name() : t.title();
-      const url = t.url();
-      if (!url) continue;
-      section.push(\`- [ ] [\${esc(title)}](\${url})\`);
-      (urls[name] = urls[name] || []).push(url);
-      count++;
+CAPTURE_JS=$(cat <<'JXA'
+ObjC.import("AppKit");
+function run(argv) {
+  const [onlyBrowser, windowSel] = argv;
+  const esc = s => (s || "(untitled)").replace(/([\[\]])/g, "\\$1").replace(/\s+/g, " ").trim();
+  const nameOf = w => { try { return w.givenName() || ""; } catch (e) { try { return w.name() || ""; } catch (e2) { return ""; } } };
+  let targets = BROWSERS.filter(([n]) => !onlyBrowser || n === onlyBrowser)
+                        .map(([n, kind]) => [n, kind, runningApp(n)]).filter(t => t[2]);
+  // "front" means the front window of whichever browser you were last using
+  if (windowSel === "front" && targets.length > 1) {
+    const front = $.NSWorkspace.sharedWorkspace.frontmostApplication.localizedName.js;
+    const hit = targets.filter(t => t[0] === front);
+    if (!hit.length) return JSON.stringify({error: "front-ambiguous", running: targets.map(t => t[0])});
+    targets = hit;
+  }
+  let out = [], total = 0, urls = {}, denied = [], skipped = 0, names = [];
+  for (const [name, kind, app] of targets) {
+    let wins;
+    try { wins = app.windows(); wins.length; } catch (e) { if (isDenied(e)) denied.push(name); continue; }
+    if (windowSel === "front") wins = wins.slice(0, 1);
+    else if (windowSel) {
+      wins.forEach(w => { const n = nameOf(w); if (n) names.push(`${n} (${name})`); });
+      wins = wins.filter(w => nameOf(w).toLowerCase() === windowSel.toLowerCase());
     }
-    section.push("");
-  });
-  if (count) { out.push(\`## \${name} — \${count} tabs\n\`, ...section); total += count; }
+    let section = [], count = 0;
+    wins.forEach((w, i) => {
+      let tabs;
+      try { tabs = w.tabs(); } catch (e) { if (isDenied(e) && !denied.includes(name)) denied.push(name); return; }
+      if (!tabs.length) return;
+      if (isIncognito(w)) { skipped += tabs.length; return; }
+      const label = windowSel === "front" ? "Front window" : windowSel ? `Window "${nameOf(w)}"` : `Window ${i + 1}`;
+      section.push(`### ${label} (${tabs.length} tabs)\n`);
+      const kept = [];
+      for (const t of tabs) {
+        const title = kind === "safari" ? t.name() : t.title();
+        const url = t.url();
+        if (!url) continue;
+        section.push(`- [ ] [${esc(title)}](${url})`);
+        kept.push(url);
+        count++;
+      }
+      // Remember which window each URL came from, so --close only touches these windows
+      (urls[name] = urls[name] || {})[w.id()] = kept;
+      section.push("");
+    });
+    if (count) { out.push(`## ${name} — ${count} tabs\n`, ...section); total += count; }
+  }
+  if (windowSel && windowSel !== "front" && !total && !skipped && !denied.length)
+    return JSON.stringify({error: "no-window", names});
+  return JSON.stringify({total, urls, denied, skipped, body: out.join("\n")});
 }
-JSON.stringify({total, urls, denied, skipped, body: out.join("\n")});
 JXA
 )
+RAW=$(print -r -- "$JXA_COMMON$CAPTURE_JS" | osascript -l JavaScript - "$BROWSER_ARG" "$WINDOW_ARG")
+
+case "$(print -r -- "$RAW" | jq -r '.error // empty')" in
+  front-ambiguous)
+    echo "tabsnap: --window front: more than one browser is open ($(print -r -- "$RAW" | jq -r '.running | join(", ")'))" >&2
+    echo "and none of them is the frontmost app. Add --browser, e.g. tabsnap --window front --browser brave" >&2
+    exit 2 ;;
+  no-window)
+    echo "tabsnap: no window named '$WINDOW_ARG'." >&2
+    named=$(print -r -- "$RAW" | jq -r '.names | unique | .[]')
+    if [[ -n "$named" ]]; then echo "Named windows: ${(j:, :)${(f)named}}" >&2
+    else echo "Name a window in Chrome, Brave or Edge: right-click the tab strip → Name window…" >&2; fi
+    exit 2 ;;
+esac
 
 TOTAL=$(print -r -- "$RAW" | jq .total)
 DENIED=$(print -r -- "$RAW" | jq -c .denied)
@@ -147,39 +206,45 @@ if [[ "$DENIED" != "[]" ]]; then
   denied_help "$DENIED"
   (( TOTAL > 0 )) || exit 3
 fi
+if (( TOTAL == 0 )) && [[ -n "$BROWSER_ARG$WINDOW_ARG" ]]; then
+  echo "Nothing to save: no tabs in ${WINDOW_ARG:+the $WINDOW_ARG window of }${BROWSER_ARG:-any open browser}$( (( SKIPPED )) && echo " (only incognito)")."
+  exit 0
+fi
 
+SCOPE="${BROWSER_ARG}${BROWSER_ARG:+${WINDOW_ARG:+ · }}${WINDOW_ARG:+$([[ "$WINDOW_ARG" == front ]] && echo "front window" || echo "window \"$WINDOW_ARG\"")}"
 {
   echo "# Tab snapshot — $HUMAN"
   echo
   [[ -n "$NOTE" ]] && echo "> $NOTE" && echo
-  echo "**Total tabs:** $TOTAL"
+  echo "**Total tabs:** $TOTAL${SCOPE:+ · **Scope:** $SCOPE}"
   echo
   print -r -- "$RAW" | jq -r .body
 } > "$FILE"
 
-echo "Saved $TOTAL tabs → $FILE"
+echo "Saved $TOTAL tabs${SCOPE:+ ($SCOPE)} → $FILE"
 (( SKIPPED > 0 )) && echo "Skipped $SKIPPED incognito tabs (not saved, not closed)"
 
 if (( CLOSE )) && (( TOTAL > 0 )); then
-  # Only close tabs whose URLs were captured, so anything opened since stays put,
+  # Only close tabs whose URLs were captured, only in the windows they were captured from,
   # and never ones on the keep list (matched by host, including subdomains)
   TO_CLOSE=$(print -r -- "$RAW" | jq -c --arg keep "$TABSNAP_KEEP" '
     ($keep | split(",") | map(gsub("^\\s+|\\s+$"; "") | ascii_downcase) | map(select(. != ""))) as $keep
     | def host: (capture("^[A-Za-z][A-Za-z0-9+.-]*://(?<h>[^/?#]+)")?.h // "")
                 | sub("^[^@]*@"; "") | sub(":[0-9]+$"; "") | ascii_downcase;
       def kept: host as $h | any($keep[]; . as $k | $h == $k or ($h | endswith("." + $k)));
-      .urls | map_values(map(select(kept | not)))')
-  KEPT=$(( TOTAL - $(print -r -- "$TO_CLOSE" | jq '[.[][]] | length') ))
-  CLOSED=$(osascript -l JavaScript - "$TO_CLOSE" <<JXA
-$JXA_COMMON
+      .urls | map_values(map_values(map(select(kept | not))))')
+  KEPT=$(( TOTAL - $(print -r -- "$TO_CLOSE" | jq '[.[][][]] | length') ))
+  CLOSE_JS=$(cat <<'JXA'
 function run(argv) {
   const saved = JSON.parse(argv[0]);
   let closed = 0;
   for (const name in saved) {
-    const want = new Set(saved[name]);
     const app = runningApp(name);
     if (!app) continue;
-    for (const w of app.windows()) {
+    for (const id in saved[name]) {
+      const want = new Set(saved[name][id]);
+      let w;
+      try { w = app.windows.byId(Number(id)); w.id(); } catch (e) { continue; }  // window gone
       if (isIncognito(w)) continue;
       const tabs = w.tabs();
       for (let i = tabs.length - 1; i >= 0; i--) {
@@ -193,6 +258,7 @@ function run(argv) {
 }
 JXA
 )
+  CLOSED=$(print -r -- "$JXA_COMMON$CLOSE_JS" | osascript -l JavaScript - "$TO_CLOSE")
   echo "Closed $CLOSED tabs$( (( KEPT > 0 )) && echo " (kept $KEPT on your keep list)")"
 fi
 

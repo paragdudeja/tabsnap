@@ -39,6 +39,7 @@ if [[ -n "$1" ]]; then
   case "$1" in
     snapshot) msg=$("$TABSNAP" 2>&1) ;;
     close)    msg=$("$TABSNAP" --close 2>&1) ;;
+    close-front) msg=$("$TABSNAP" --close --window front 2>&1) ;;
     triage-close)
       notify "Saving and closing tabs, then triaging…"
       msg=$("$TABSNAP" --close --triage 2>&1) ;;
@@ -94,6 +95,7 @@ fi
 echo "---"
 echo "Snapshot | bash=$SELF param1=snapshot terminal=false refresh=true sfimage=camera shortcut=CMD+CTRL+OPTION+S"
 echo "Snapshot + Close | bash=$SELF param1=close terminal=false refresh=true sfimage=xmark.square shortcut=CMD+CTRL+OPTION+X"
+echo "Snapshot + Close front window | bash=$SELF param1=close-front terminal=false refresh=true sfimage=macwindow.badge.plus"
 echo "Snapshot + Close + Triage | bash=$SELF param1=triage-close terminal=false refresh=true sfimage=sparkles"
 echo "---"
 if [[ -n "$snap" ]]; then
